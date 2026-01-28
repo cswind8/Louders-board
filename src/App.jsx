@@ -35,10 +35,21 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+// [수정] 파일 다운로드 헬퍼 함수
+const downloadFile = (content, fileName, mimeType) => {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
 const InternalBoard = () => {
-  // ==================================================================================
   // 1. 상태(State) 선언부
-  // ==================================================================================
   
   const [viewMode, setViewMode] = useState('login');
   const [currentUser, setCurrentUser] = useState(null);
@@ -143,9 +154,7 @@ const InternalBoard = () => {
   const contentRef = useRef(null);
   const savedSelection = useRef(null);
 
-  // ==================================================================================
   // 2. Effects & Helpers
-  // ==================================================================================
 
   // 엑셀 라이브러리 자동 로딩 (CDN)
   useEffect(() => {
@@ -166,7 +175,7 @@ const InternalBoard = () => {
     return null;
   };
 
-  // [핵심] Firebase 데이터 실시간 불러오기
+  // Firebase 데이터 실시간 불러오기
   useEffect(() => {
     const q = query(collection(db, "posts"), orderBy("id", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -205,18 +214,16 @@ const InternalBoard = () => {
   const handleLogin = (e) => { e.preventDefault(); const user = users.find(u => u.userId === loginId && u.password === loginPw); if (user) { setCurrentUser(user); setViewMode('list'); setLoginId(''); setLoginPw(''); } else showAlert("정보가 올바르지 않습니다."); };
   const handleLogout = () => showConfirm("로그아웃 하시겠습니까?", () => { setCurrentUser(null); setViewMode('login'); });
 
-  // --- 글쓰기/수정 (Firebase) ---
+  // --- 글쓰기/수정 ---
   const handleWriteSubmit = async () => {
     if (!writeForm.title.trim()) { showAlert("제목을 입력해주세요."); return; }
     const today = new Date();
     const dateString = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')} ${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
-    
     const postData = {
         title: writeForm.title, content: writeForm.content, 
         titleColor: writeForm.titleColor, titleSize: writeForm.titleSize,
         attachments: writeForm.attachments, boardId: activeBoardId, category: activeBoard.name,
     };
-
     try {
         if (writeForm.docId) {
             await updateDoc(doc(db, "posts", writeForm.docId), postData);
@@ -253,6 +260,7 @@ const InternalBoard = () => {
     } catch (e) { showAlert("삭제 중 오류 발생"); }
   };
 
+  // [수정] 삭제 메시지 변경 (공손한 표현)
   const handleDeleteSelected = () => {
       if (selectedIds.length === 0) return;
       const processBatch = async (actionType) => {
@@ -268,13 +276,14 @@ const InternalBoard = () => {
           setSelectedIds([]);
           showAlert("처리되었습니다.");
       };
-      if (activeBoardId === 'trash') showConfirm("영구 삭제?", () => processBatch('del'));
-      else showConfirm("삭제?", () => processBatch('soft'));
+      // [수정] 문구 변경
+      if (activeBoardId === 'trash') showConfirm("선택한 게시글을 영구 삭제하시겠습니까?", () => processBatch('del'));
+      else showConfirm("선택한 게시글을 휴지통으로 이동하시겠습니까?", () => processBatch('soft'));
   };
 
   const handleRestoreSelected = () => {
       if (selectedIds.length === 0) return;
-      showConfirm("복구하시겠습니까?", async () => {
+      showConfirm("선택한 게시글을 복구하시겠습니까?", async () => {
           const batch = writeBatch(db);
           const targets = posts.filter(p => selectedIds.includes(p.docId));
           targets.forEach(p => batch.update(doc(db, "posts", p.docId), { isDeleted: false }));
@@ -317,8 +326,10 @@ const InternalBoard = () => {
   };
 
   const handlePostClick = async (post) => {
-    const postRef = doc(db, "posts", post.docId);
-    updateDoc(postRef, { views: increment(1) });
+    if (post.docId) {
+        const postRef = doc(db, "posts", post.docId);
+        updateDoc(postRef, { views: increment(1) });
+    }
     setSelectedPost(post);
     setViewMode('detail');
   };
@@ -418,19 +429,88 @@ const InternalBoard = () => {
     });
   };
 
-  // --- 엑셀 관련 ---
+  // --- 엑셀 및 데이터 처리 로직 수정 (DB 저장 포함) ---
+  
+  // [수정] DB에 일괄 저장하는 함수 (기존 데이터 삭제 후 추가)
+  const saveImportedDataToDB = async (importedPosts) => {
+    try {
+        // 1. 기존 데이터 삭제를 위한 Batch 생성
+        const deleteBatch = writeBatch(db);
+        let deleteCount = 0;
+        
+        // 현재 posts(DB에서 불러온 전체 데이터)를 모두 삭제 대기열에 추가
+        posts.forEach(post => {
+            if (post.docId) { // docId가 있는 실제 DB 문서만
+                const ref = doc(db, "posts", post.docId);
+                deleteBatch.delete(ref);
+                deleteCount++;
+            }
+        });
+        
+        // 삭제 실행 (최대 500개 제한 고려, 여기선 단순화)
+        if (deleteCount > 0) {
+            await deleteBatch.commit();
+        }
+
+        // 2. 새 데이터 추가를 위한 새 Batch 생성
+        const addBatch = writeBatch(db);
+        let addCount = 0;
+        const limit = 450; // 안전하게 제한
+        
+        for (const post of importedPosts) {
+            if (addCount >= limit) break;
+            
+            const newDocRef = doc(collection(db, "posts")); // 새 문서 ID 자동 생성
+            // 엑셀에서 가져온 데이터 정리
+            const { docId, ...postData } = post; 
+            
+            const dataToSave = {
+                ...postData,
+                // SystemID가 있으면 그걸 쓰고, 없으면 새로 생성 (정렬 보존)
+                id: post.id || Date.now() + addCount, 
+                date: post.date || getTodayString(),
+                views: post.views || 0,
+                type: post.type || 'normal',
+                file: post.file || false,
+                isMoved: false,
+                isDeleted: false,
+                isBookmarked: false,
+                comments: []
+            };
+            
+            addBatch.set(newDocRef, dataToSave);
+            addCount++;
+        }
+        
+        await addBatch.commit();
+        showAlert(`기존 데이터를 삭제하고 ${addCount}건의 데이터를 새로 등록했습니다.`);
+    } catch (e) {
+        console.error(e);
+        showAlert("데이터 처리 중 오류가 발생했습니다: " + e.message);
+    }
+  };
+
   const handleExportExcel = () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
+    
+    // [수정] 내보낼 때 '순번'을 계산해서 포함
     const activePosts = posts.filter(p => !p.isDeleted);
-    const data = activePosts.map(p => ({
-        '번호': p.id, '분류': p.category, '제목': p.title, '작성자': p.author, 
-        '등록일': p.date, '조회수': p.views, '내용': htmlToTextWithLineBreaks(p.content)
+    const data = activePosts.map((p, idx) => ({
+        '순번': activePosts.length - idx, 
+        '분류': p.category, 
+        '제목': p.title, 
+        '작성자': p.author, 
+        '등록일': p.date, 
+        '조회수': p.views, 
+        '내용': htmlToTextWithLineBreaks(p.content),
+        'SystemID': p.id // 복원 시 정렬 유지용
     }));
+    
     const ws = XLSX_LIB.utils.json_to_sheet(data);
     const wb = XLSX_LIB.utils.book_new();
     XLSX_LIB.utils.book_append_sheet(wb, ws, "게시글");
-    XLSX_LIB.writeFile(wb, `Backup_${new Date().toLocaleDateString()}.xlsx`);
+    XLSX_LIB.writeFile(wb, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.xlsx`);
   };
 
   const handleImportExcelClick = () => { 
@@ -450,16 +530,30 @@ const InternalBoard = () => {
         const workbook = XLSX_LIB.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
         const jsonData = XLSX_LIB.utils.sheet_to_json(workbook.Sheets[firstSheetName]);
+        
         if (jsonData.length === 0) { showAlert("데이터 없음"); return; }
-        const boardNameMap = {}; categories.forEach(cat => cat.boards.forEach(board => boardNameMap[board.name] = board.id));
+        
+        const boardNameMap = {}; 
+        categories.forEach(cat => cat.boards.forEach(board => boardNameMap[board.name] = board.id));
+        
         const parsedPosts = jsonData.filter(row => row['제목']).map(row => ({
-            id: row['번호'] || Date.now(), category: row['분류'] || '기타', boardId: boardNameMap[row['분류']] || 11,
-            title: row['제목'], author: row['작성자'] || '익명', date: row['등록일'] || getTodayString(), views: row['조회수'] || 0,
-            content: row['내용'] ? textToHtmlWithLineBreaks(row['내용']) : '', type: 'normal', file: false, attachments: [], 
-            titleColor: 'text-slate-900', titleSize: 'text-[14pt]', isMoved: false, isDeleted: false, isBookmarked: false, comments: []
+            id: row['SystemID'] || Date.now(), 
+            category: row['분류'] || '기타', 
+            boardId: boardNameMap[row['분류']] || 11,
+            title: row['제목'], 
+            author: row['작성자'] || '익명', 
+            date: row['등록일'] || getTodayString(), 
+            views: row['조회수'] || 0,
+            content: row['내용'] ? textToHtmlWithLineBreaks(row['내용']) : '', 
+            type: 'normal', file: false, attachments: [], 
+            titleColor: 'text-slate-900', titleSize: 'text-[14pt]', 
+            isMoved: false, isDeleted: false, isBookmarked: false, comments: []
         }));
-        showConfirm(`엑셀 데이터 ${parsedPosts.length}건을 불러오시겠습니까? (DB 저장 미구현)`, () => { setPosts(parsedPosts.sort((a, b) => b.id - a.id)); });
-      } catch (error) { showAlert("엑셀 처리 오류"); }
+        
+        showConfirm(`주의: 기존 게시글을 모두 삭제하고\n엑셀 데이터 ${parsedPosts.length}건으로 교체하시겠습니까?`, () => { 
+            saveImportedDataToDB(parsedPosts);
+        });
+      } catch (error) { showAlert("엑셀 처리 오류: " + error.message); }
     };
     reader.readAsArrayBuffer(file); e.target.value = '';
   };
@@ -468,16 +562,28 @@ const InternalBoard = () => {
   const handleImportFileChange = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => { try { const importedData = JSON.parse(event.target.result); if (Array.isArray(importedData)) showConfirm(`데이터 ${importedData.length}개 복원?`, () => { setPosts(importedData.sort((a, b) => b.id - a.id)); }); } catch (error) { showAlert("파일 오류"); } };
+    reader.onload = (event) => { 
+        try { 
+            const importedData = JSON.parse(event.target.result); 
+            if (Array.isArray(importedData)) {
+                showConfirm(`주의: 기존 게시글을 모두 삭제하고\n백업 파일의 ${importedData.length}건으로 교체하시겠습니까?`, () => { 
+                    saveImportedDataToDB(importedData);
+                }); 
+            }
+        } catch (error) { showAlert("파일 오류"); } 
+    };
     reader.readAsText(file); e.target.value = ''; 
   };
-  const handleExportJSON = () => { const activePosts = posts.filter(post => !post.isDeleted); const jsonContent = JSON.stringify(activePosts, null, 2); downloadFile(jsonContent, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.json`, 'application/json'); };
-  const downloadFile = (content, fileName, mimeType) => { const blob = new Blob([content], { type: mimeType }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); };
+  
+  const handleExportJSON = () => { 
+    const activePosts = posts.filter(post => !post.isDeleted); 
+    const jsonContent = JSON.stringify(activePosts, null, 2); 
+    downloadFile(jsonContent, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.json`, 'application/json'); 
+  };
 
   // UI 핸들러
   const handleGlobalSearch = () => { if(!searchInput.trim()) return; setSearchQuery(searchInput); setViewMode('search'); setSearchFilterBoardId('all'); setActivePage(1); };
   
-  // 검색 결과 계산 및 보드 통계 (복구됨)
   const getSearchResults = () => {
     if (!searchQuery) return [];
     const query = searchQuery.toLowerCase();
@@ -506,7 +612,6 @@ const InternalBoard = () => {
       return !p.isDeleted;
   });
 
-  // [수정] 검색 모드일 때 필터링된 결과 적용
   const filteredPosts = viewMode === 'search' ? currentSearchResults : getFilteredPosts();
   
   const indexOfLastPost = activePage * postsPerPage; const indexOfFirstPost = indexOfLastPost - postsPerPage; 
@@ -521,7 +626,6 @@ const InternalBoard = () => {
   };
   const handleGoToWrite = () => { let content = ''; const ab = getActiveBoard(); if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); setViewMode('write'); };
   
-  // [복구] 수정 시 폰트/색상 불러오기
   const handleEditPost = () => { 
     if(!selectedPost) return; 
     setWriteForm({ 
@@ -535,7 +639,6 @@ const InternalBoard = () => {
   };
   const handleTempSave = () => { localStorage.setItem('internalBoard_temp', JSON.stringify(writeForm)); showAlert("임시 저장됨"); };
   
-  // [수정] docId 기준으로 선택 로직 변경 (선택 유지)
   const handleSelectAllCheckbox = (e) => setSelectedIds(e.target.checked ? filteredPosts.map(p => p.docId) : []);
   const toggleSelection = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   
@@ -555,7 +658,6 @@ const InternalBoard = () => {
     }
   };
 
-  // [복구] 에디터 기능
   const applyFormatBlock = (tag) => document.execCommand('formatBlock', false, tag);
   const applyFontSize = (size) => {
     const selection = window.getSelection();
@@ -587,10 +689,6 @@ const InternalBoard = () => {
   const showConfirm = (message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', message, onConfirm });
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
   const handleConfirmAction = () => { if (modalConfig.onConfirm) modalConfig.onConfirm(); closeModal(); };
-
-  // ----------------------------------------------------------------------------------
-  // 3. 화면 렌더링
-  // ----------------------------------------------------------------------------------
 
   if (viewMode === 'login') {
     return (
@@ -721,7 +819,7 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            {/* 번호 표시 */}
+                            {/* [수정] 번호 표시: 전체 글 개수 - (현재 페이지 * 페이지당 개수) - 인덱스 */}
                             <td className="text-center text-slate-500">{filteredPosts.length - (activePage - 1) * postsPerPage - idx}</td>
                             <td className="py-2 px-3">
                                 <div className="flex items-center gap-1.5">
