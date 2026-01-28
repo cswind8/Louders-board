@@ -49,10 +49,21 @@ const downloadFile = (content, fileName, mimeType) => {
 };
 
 const InternalBoard = () => {
+  // ==================================================================================
   // 1. 상태(State) 선언부
+  // ==================================================================================
   
-  const [viewMode, setViewMode] = useState('login');
-  const [currentUser, setCurrentUser] = useState(null);
+  // [수정] 로그인 상태 영구 유지 (새로고침/뒤로가기 방지)
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem('board_user');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+
+  // [수정] 초기 화면 설정 (로그인 되어있으면 바로 리스트로)
+  const [viewMode, setViewMode] = useState(() => {
+    return localStorage.getItem('board_user') ? 'list' : 'login';
+  });
+
   const [loginId, setLoginId] = useState('');
   const [loginPw, setLoginPw] = useState('');
   const apiKey = ""; 
@@ -154,7 +165,30 @@ const InternalBoard = () => {
   const contentRef = useRef(null);
   const savedSelection = useRef(null);
 
+  // ==================================================================================
   // 2. Effects & Helpers
+  // ==================================================================================
+
+  // [추가] 브라우저 뒤로가기 버튼 처리 (UX 개선)
+  useEffect(() => {
+    // 상세화면, 글쓰기, 검색 화면에 들어올 때 히스토리 스택 추가
+    if (viewMode === 'detail' || viewMode === 'write' || viewMode === 'search') {
+      // 현재 상태를 히스토리에 저장
+      window.history.pushState({ page: viewMode }, "", "");
+    }
+
+    const handlePopState = (event) => {
+      // 뒤로가기 눌렀을 때, 로그인 상태라면 앱 밖으로 나가지 않고 목록으로 이동
+      if (viewMode !== 'list' && viewMode !== 'login') {
+        // 브라우저 기본 뒤로가기를 막고 목록으로 전환
+        setViewMode('list');
+        setSelectedPost(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [viewMode]);
 
   // 엑셀 라이브러리 자동 로딩 (CDN)
   useEffect(() => {
@@ -211,18 +245,36 @@ const InternalBoard = () => {
   const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
   // --- 로그인/아웃 ---
-  const handleLogin = (e) => { e.preventDefault(); const user = users.find(u => u.userId === loginId && u.password === loginPw); if (user) { setCurrentUser(user); setViewMode('list'); setLoginId(''); setLoginPw(''); } else showAlert("정보가 올바르지 않습니다."); };
-  const handleLogout = () => showConfirm("로그아웃 하시겠습니까?", () => { setCurrentUser(null); setViewMode('login'); });
+  const handleLogin = (e) => { 
+    e.preventDefault(); 
+    const user = users.find(u => u.userId === loginId && u.password === loginPw); 
+    if (user) { 
+        setCurrentUser(user); 
+        // [수정] 로그인 시 로컬 스토리지에 저장
+        localStorage.setItem('board_user', JSON.stringify(user));
+        setViewMode('list'); 
+        setLoginId(''); 
+        setLoginPw(''); 
+    } else { 
+        showAlert("정보가 올바르지 않습니다."); 
+    } 
+  };
+  
+  const handleLogout = () => showConfirm("로그아웃 하시겠습니까?", () => { 
+      setCurrentUser(null); 
+      // [수정] 로그아웃 시 로컬 스토리지 삭제
+      localStorage.removeItem('board_user');
+      setViewMode('login'); 
+  });
 
-  // --- 글쓰기/수정 ---
+  // --- 글쓰기/수정 (Firebase) ---
   const handleWriteSubmit = async () => {
     if (!writeForm.title.trim()) { showAlert("제목을 입력해주세요."); return; }
     const today = new Date();
     const dateString = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')} ${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
     const postData = {
-        title: writeForm.title, content: writeForm.content, 
-        titleColor: writeForm.titleColor, titleSize: writeForm.titleSize,
-        attachments: writeForm.attachments, boardId: activeBoardId, category: activeBoard.name,
+        title: writeForm.title, content: writeForm.content, titleColor: writeForm.titleColor, 
+        titleSize: writeForm.titleSize, attachments: writeForm.attachments, boardId: activeBoardId, category: activeBoard.name,
     };
     try {
         if (writeForm.docId) {
@@ -260,7 +312,6 @@ const InternalBoard = () => {
     } catch (e) { showAlert("삭제 중 오류 발생"); }
   };
 
-  // [수정] 삭제 메시지 변경 (공손한 표현)
   const handleDeleteSelected = () => {
       if (selectedIds.length === 0) return;
       const processBatch = async (actionType) => {
@@ -276,7 +327,6 @@ const InternalBoard = () => {
           setSelectedIds([]);
           showAlert("처리되었습니다.");
       };
-      // [수정] 문구 변경
       if (activeBoardId === 'trash') showConfirm("선택한 게시글을 영구 삭제하시겠습니까?", () => processBatch('del'));
       else showConfirm("선택한 게시글을 휴지통으로 이동하시겠습니까?", () => processBatch('soft'));
   };
@@ -431,42 +481,35 @@ const InternalBoard = () => {
 
   // --- 엑셀 및 데이터 처리 로직 수정 (DB 저장 포함) ---
   
-  // [수정] DB에 일괄 저장하는 함수 (기존 데이터 삭제 후 추가)
   const saveImportedDataToDB = async (importedPosts) => {
     try {
-        // 1. 기존 데이터 삭제를 위한 Batch 생성
         const deleteBatch = writeBatch(db);
         let deleteCount = 0;
         
-        // 현재 posts(DB에서 불러온 전체 데이터)를 모두 삭제 대기열에 추가
         posts.forEach(post => {
-            if (post.docId) { // docId가 있는 실제 DB 문서만
+            if (post.docId) { 
                 const ref = doc(db, "posts", post.docId);
                 deleteBatch.delete(ref);
                 deleteCount++;
             }
         });
         
-        // 삭제 실행 (최대 500개 제한 고려, 여기선 단순화)
         if (deleteCount > 0) {
             await deleteBatch.commit();
         }
 
-        // 2. 새 데이터 추가를 위한 새 Batch 생성
         const addBatch = writeBatch(db);
         let addCount = 0;
-        const limit = 450; // 안전하게 제한
+        const limit = 450; 
         
         for (const post of importedPosts) {
             if (addCount >= limit) break;
             
-            const newDocRef = doc(collection(db, "posts")); // 새 문서 ID 자동 생성
-            // 엑셀에서 가져온 데이터 정리
+            const newDocRef = doc(collection(db, "posts")); 
             const { docId, ...postData } = post; 
             
             const dataToSave = {
                 ...postData,
-                // SystemID가 있으면 그걸 쓰고, 없으면 새로 생성 (정렬 보존)
                 id: post.id || Date.now() + addCount, 
                 date: post.date || getTodayString(),
                 views: post.views || 0,
@@ -494,7 +537,6 @@ const InternalBoard = () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
     
-    // [수정] 내보낼 때 '순번'을 계산해서 포함
     const activePosts = posts.filter(p => !p.isDeleted);
     const data = activePosts.map((p, idx) => ({
         '순번': activePosts.length - idx, 
@@ -504,7 +546,7 @@ const InternalBoard = () => {
         '등록일': p.date, 
         '조회수': p.views, 
         '내용': htmlToTextWithLineBreaks(p.content),
-        'SystemID': p.id // 복원 시 정렬 유지용
+        'SystemID': p.id 
     }));
     
     const ws = XLSX_LIB.utils.json_to_sheet(data);
@@ -750,7 +792,6 @@ const InternalBoard = () => {
                                 <span className="text-lg">'{searchQuery}' 검색 결과</span>
                                 <span className="text-sm bg-indigo-100 px-2 py-0.5 rounded-full text-indigo-600">{searchResults.length}건</span>
                             </div>
-                            {/* [복구] 게시판별 필터링 버튼 */}
                             {searchResults.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mt-2">
                                     <button 
@@ -819,11 +860,10 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            {/* [수정] 번호 표시: 전체 글 개수 - (현재 페이지 * 페이지당 개수) - 인덱스 */}
                             <td className="text-center text-slate-500">{filteredPosts.length - (activePage - 1) * postsPerPage - idx}</td>
                             <td className="py-2 px-3">
                                 <div className="flex items-center gap-1.5">
-                                    {/* [추가] 검색 모드이거나 휴지통일 때 게시판 이름 배지 표시 */}
+                                    {/* [수정] 검색 모드나 휴지통에서 게시판 이름 UI 추가 */}
                                     {(viewMode === 'search' || activeBoardId === 'trash') && (
                                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">
                                             {post.category}
