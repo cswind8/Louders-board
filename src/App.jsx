@@ -1362,6 +1362,24 @@ const InternalBoard = () => {
                     </div>
                   </div>
                 )}
+
+                {/* [추가] 하단 버튼 그룹 (요청사항 반영) */}
+                <div className="mt-12 pt-6 border-t border-slate-100 flex justify-end items-center gap-2 print-hidden">
+                     <button onClick={handleBackToList} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-sm font-bold rounded-lg hover:bg-slate-50 transition-colors">목록</button>
+                     <button onClick={handlePrint} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors"><Printer size={16} /> 출력</button>
+                     
+                     {selectedPost.isDeleted ? (
+                        <>
+                          <button onClick={() => { showConfirm("이 게시글을 복구하시겠습니까?", () => { setPosts(posts.map(p => p.id === selectedPost.id ? { ...p, isDeleted: false } : p)); handleBackToList(); }); }} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-green-700 bg-green-50 border border-green-100 rounded-lg hover:bg-green-100 transition-colors"><RefreshCcw size={16} /> 복구</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 영구삭제</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={handleEditPost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition-colors"><Edit size={16} /> 수정</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 삭제</button>
+                        </>
+                      )}
+                </div>
               </div>
 
               {/* 댓글 섹션 */}
