@@ -7,7 +7,7 @@ import {
   Eye, Calendar, UserCircle, ArrowLeft, Edit, ArrowUp, ArrowDown, CheckSquare, AlertCircle, 
   ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Sparkles, Loader2,
   Heading1, Heading2, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
-  ChevronsLeft, ChevronsRight 
+  ChevronsLeft, ChevronsRight, Printer 
 } from 'lucide-react';
 
 // [중요] 로컬(내 컴퓨터)에서 실행할 때는 아래 줄의 주석(//)을 지우고 사용하세요!
@@ -35,7 +35,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// [수정] 파일 다운로드 헬퍼 함수
+// 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -53,13 +53,12 @@ const InternalBoard = () => {
   // 1. 상태(State) 선언부
   // ==================================================================================
   
-  // [수정] 로그인 상태 영구 유지 (새로고침/뒤로가기 방지)
+  // 로그인 상태 유지
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
-  // [수정] 초기 화면 설정 (로그인 되어있으면 바로 리스트로)
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('board_user') ? 'list' : 'login';
   });
@@ -68,7 +67,7 @@ const InternalBoard = () => {
   const [loginPw, setLoginPw] = useState('');
   const apiKey = ""; 
 
-  // 게시글 데이터 (DB에서 불러옴)
+  // 게시글 데이터
   const [posts, setPosts] = useState([]);
   
   // 선택된 게시글 및 체크박스
@@ -169,23 +168,53 @@ const InternalBoard = () => {
   // 2. Effects & Helpers
   // ==================================================================================
 
-  // [추가] 브라우저 뒤로가기 버튼 처리 (UX 개선)
+  // [수정] 글쓰기/수정 모드로 진입 시 에디터에 기존 내용을 주입하는 Effect
   useEffect(() => {
-    // 상세화면, 글쓰기, 검색 화면에 들어올 때 히스토리 스택 추가
+    if (viewMode === 'write' && contentRef.current) {
+        // 이미 내용이 입력되어 있다면(예: 사용자가 입력 중) 덮어쓰지 않도록 할 수 있으나,
+        // 여기서는 수정 버튼을 눌러 들어왔을 때 초기값을 세팅하는 것이 주 목적이므로
+        // innerHTML이 비어있거나, writeForm.content와 다를 때 업데이트합니다.
+        // 다만 타이핑 중 리렌더링으로 커서 튐 방지를 위해 체크가 필요하지만, 
+        // viewMode가 변경되어 처음 렌더링될 때 한 번 실행하는 것이 가장 안전합니다.
+        
+        // 간단한 해결책: 렌더링 직후 한 번만 실행되도록 의존성을 viewMode로 설정
+        // handleEditPost에서 setWriteForm을 먼저 하므로 writeForm.content에는 이미 값이 있음
+        contentRef.current.innerHTML = writeForm.content || '';
+    }
+  }, [viewMode]); // viewMode가 'write'로 바뀔 때 실행
+
+  // [보안 업데이트] 검색 엔진 노출 방지 (Google, Naver 등)
+  useEffect(() => {
+    // 1. 로봇 수집 거부 태그 생성 (noindex, nofollow)
+    const metaRobots = document.createElement('meta');
+    metaRobots.name = "robots";
+    metaRobots.content = "noindex, nofollow, noarchive";
+    document.head.appendChild(metaRobots);
+
+    // 2. 구글봇 특정 차단
+    const metaGoogle = document.createElement('meta');
+    metaGoogle.name = "googlebot";
+    metaGoogle.content = "noindex, nofollow";
+    document.head.appendChild(metaGoogle);
+
+    return () => {
+      // 컴포넌트 해제 시 정리 (보통 SPA에서는 계속 유지되어야 하므로 큰 의미 없지만 클린업 차원)
+      if(document.head.contains(metaRobots)) document.head.removeChild(metaRobots);
+      if(document.head.contains(metaGoogle)) document.head.removeChild(metaGoogle);
+    };
+  }, []);
+
+  // 브라우저 뒤로가기 처리
+  useEffect(() => {
     if (viewMode === 'detail' || viewMode === 'write' || viewMode === 'search') {
-      // 현재 상태를 히스토리에 저장
       window.history.pushState({ page: viewMode }, "", "");
     }
-
     const handlePopState = (event) => {
-      // 뒤로가기 눌렀을 때, 로그인 상태라면 앱 밖으로 나가지 않고 목록으로 이동
       if (viewMode !== 'list' && viewMode !== 'login') {
-        // 브라우저 기본 뒤로가기를 막고 목록으로 전환
         setViewMode('list');
         setSelectedPost(null);
       }
     };
-
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [viewMode]);
@@ -209,8 +238,16 @@ const InternalBoard = () => {
     return null;
   };
 
-  // Firebase 데이터 실시간 불러오기
+  // [보안 업데이트] Firebase 데이터 실시간 불러오기
+  // 기존: 로그인 여부 상관없이 데이터 로드됨 -> 변경: currentUser가 있을 때만 데이터 구독
   useEffect(() => {
+    // 1. 로그인이 안 되어 있다면 데이터를 불러오지 않음 (보안 강화)
+    if (!currentUser) {
+      setPosts([]); // 로그아웃 상태라면 기존 데이터도 메모리에서 비움
+      return; 
+    }
+
+    // 2. 로그인 된 경우에만 Firestore 연결
     const q = query(collection(db, "posts"), orderBy("id", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const dbPosts = snapshot.docs.map(doc => ({
@@ -223,9 +260,11 @@ const InternalBoard = () => {
         const current = dbPosts.find(p => p.id === selectedPost.id);
         if (current) setSelectedPost(current);
       }
+    }, (error) => {
+      console.error("Data fetch error:", error);
     });
     return () => unsubscribe();
-  }, [selectedPost?.id]);
+  }, [selectedPost?.id, currentUser]); // currentUser가 변경될 때마다(로그인/로그아웃) 재실행
 
   const getActiveBoard = () => {
     if (activeBoardId === 'trash') return { id: 'trash', name: '휴지통', type: 'system' };
@@ -244,14 +283,19 @@ const InternalBoard = () => {
   const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
   const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
-  // --- 로그인/아웃 ---
+  // --- 로그인/아웃 (수정됨) ---
   const handleLogin = (e) => { 
     e.preventDefault(); 
-    const user = users.find(u => u.userId === loginId && u.password === loginPw); 
+    // 입력값 공백 제거 (실수 방지)
+    const id = loginId.trim();
+    const pw = loginPw.trim();
+
+    const user = users.find(u => u.userId === id && u.password === pw); 
     if (user) { 
         setCurrentUser(user); 
-        // [수정] 로그인 시 로컬 스토리지에 저장
         localStorage.setItem('board_user', JSON.stringify(user));
+        // [중요] 로그인 성공 시 기존에 떠있을 수 있는 알림창을 확실히 닫음
+        setModalConfig({ isOpen: false, type: '', message: '', onConfirm: null });
         setViewMode('list'); 
         setLoginId(''); 
         setLoginPw(''); 
@@ -262,8 +306,8 @@ const InternalBoard = () => {
   
   const handleLogout = () => showConfirm("로그아웃 하시겠습니까?", () => { 
       setCurrentUser(null); 
-      // [수정] 로그아웃 시 로컬 스토리지 삭제
       localStorage.removeItem('board_user');
+      setPosts([]); // 로그아웃 시 데이터 즉시 비우기
       setViewMode('login'); 
   });
 
@@ -479,54 +523,61 @@ const InternalBoard = () => {
     });
   };
 
-  // --- 엑셀 및 데이터 처리 로직 수정 (DB 저장 포함) ---
-  
+  // --- 대용량 일괄 저장 로직 ---
   const saveImportedDataToDB = async (importedPosts) => {
     try {
-        const deleteBatch = writeBatch(db);
-        let deleteCount = 0;
+        // 1. 기존 데이터 삭제
+        const deleteChunkSize = 400; 
+        const deleteBatches = [];
         
-        posts.forEach(post => {
-            if (post.docId) { 
-                const ref = doc(db, "posts", post.docId);
-                deleteBatch.delete(ref);
-                deleteCount++;
-            }
-        });
-        
-        if (deleteCount > 0) {
-            await deleteBatch.commit();
+        for (let i = 0; i < posts.length; i += deleteChunkSize) {
+            const batch = writeBatch(db);
+            const chunk = posts.slice(i, i + deleteChunkSize);
+            let hasOp = false;
+            chunk.forEach(post => {
+                if (post.docId) {
+                    const ref = doc(db, "posts", post.docId);
+                    batch.delete(ref);
+                    hasOp = true;
+                }
+            });
+            if (hasOp) deleteBatches.push(batch.commit());
         }
+        
+        await Promise.all(deleteBatches);
 
-        const addBatch = writeBatch(db);
-        let addCount = 0;
-        const limit = 450; 
+        // 2. 새 데이터 추가
+        const addChunkSize = 400;
+        const addBatches = [];
         
-        for (const post of importedPosts) {
-            if (addCount >= limit) break;
+        for (let i = 0; i < importedPosts.length; i += addChunkSize) {
+            const batch = writeBatch(db);
+            const chunk = importedPosts.slice(i, i + addChunkSize);
             
-            const newDocRef = doc(collection(db, "posts")); 
-            const { docId, ...postData } = post; 
-            
-            const dataToSave = {
-                ...postData,
-                id: post.id || Date.now() + addCount, 
-                date: post.date || getTodayString(),
-                views: post.views || 0,
-                type: post.type || 'normal',
-                file: post.file || false,
-                isMoved: false,
-                isDeleted: false,
-                isBookmarked: false,
-                comments: []
-            };
-            
-            addBatch.set(newDocRef, dataToSave);
-            addCount++;
+            chunk.forEach((post) => {
+                const newDocRef = doc(collection(db, "posts")); 
+                const { docId, ...postData } = post; 
+                
+                const dataToSave = {
+                    ...postData,
+                    id: post.id || Date.now(),
+                    date: post.date || getTodayString(),
+                    views: post.views || 0,
+                    type: post.type || 'normal',
+                    file: post.file || false,
+                    isMoved: false,
+                    isDeleted: false,
+                    isBookmarked: false,
+                    comments: []
+                };
+                
+                batch.set(newDocRef, dataToSave);
+            });
+            addBatches.push(batch.commit());
         }
         
-        await addBatch.commit();
-        showAlert(`기존 데이터를 삭제하고 ${addCount}건의 데이터를 새로 등록했습니다.`);
+        await Promise.all(addBatches);
+        showAlert(`기존 데이터를 삭제하고 총 ${importedPosts.length}건의 데이터를 성공적으로 업로드했습니다.`);
     } catch (e) {
         console.error(e);
         showAlert("데이터 처리 중 오류가 발생했습니다: " + e.message);
@@ -539,7 +590,7 @@ const InternalBoard = () => {
     
     const activePosts = posts.filter(p => !p.isDeleted);
     const data = activePosts.map((p, idx) => ({
-        '순번': activePosts.length - idx, 
+        '번호': p.id, 
         '분류': p.category, 
         '제목': p.title, 
         '작성자': p.author, 
@@ -578,8 +629,16 @@ const InternalBoard = () => {
         const boardNameMap = {}; 
         categories.forEach(cat => cat.boards.forEach(board => boardNameMap[board.name] = board.id));
         
-        const parsedPosts = jsonData.filter(row => row['제목']).map(row => ({
-            id: row['SystemID'] || Date.now(), 
+        // [수정] 엑셀 데이터의 순서(위->아래)를 보장하기 위한 타임스탬프 기반 ID 생성
+        // 게시판은 ID 역순(내림차순)으로 정렬되므로, 엑셀의 첫 번째 행(index 0)이 가장 큰 ID를 가져야 합니다.
+        const baseTimestamp = Date.now();
+
+        const parsedPosts = jsonData.filter(row => row['제목']).map((row, index) => ({
+            // 엑셀의 순서를 강제로 따르도록 ID 재설정
+            // 첫 번째 행(index 0) -> baseTimestamp + 전체길이
+            // 마지막 행 -> baseTimestamp + 1
+            id: baseTimestamp + (jsonData.length - index),
+            
             category: row['분류'] || '기타', 
             boardId: boardNameMap[row['분류']] || 11,
             title: row['제목'], 
@@ -592,7 +651,7 @@ const InternalBoard = () => {
             isMoved: false, isDeleted: false, isBookmarked: false, comments: []
         }));
         
-        showConfirm(`주의: 기존 게시글을 모두 삭제하고\n엑셀 데이터 ${parsedPosts.length}건으로 교체하시겠습니까?`, () => { 
+        showConfirm(`주의: 기존 게시글을 모두 삭제하고\n엑셀 데이터 ${parsedPosts.length}건으로 교체하시겠습니까?\n(엑셀 파일의 순서대로 등록됩니다)`, () => { 
             saveImportedDataToDB(parsedPosts);
         });
       } catch (error) { showAlert("엑셀 처리 오류: " + error.message); }
@@ -621,6 +680,136 @@ const InternalBoard = () => {
     const activePosts = posts.filter(post => !post.isDeleted); 
     const jsonContent = JSON.stringify(activePosts, null, 2); 
     downloadFile(jsonContent, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.json`, 'application/json'); 
+  };
+
+  // [수정] 인쇄 기능 핸들러 개선 (새 창 팝업 방식)
+  const handlePrint = () => {
+    if (!selectedPost) return;
+
+    // 새 팝업 창 열기
+    const printWindow = window.open('', '_blank', 'width=900,height=800,scrollbars=yes');
+    
+    if (!printWindow) {
+        showAlert("팝업 차단이 설정되어 있어 인쇄 창을 열 수 없습니다. 팝업 차단을 해제해 주세요.");
+        return;
+    }
+
+    // 인쇄용 HTML 문서 생성
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="ko">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>인쇄 미리보기 - ${selectedPost.title}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+          /* [수정] 기본 폰트 크기 축소 (약 20% 축소 효과를 위해 13px~14px 정도 설정하거나 transform 사용) */
+          body { 
+            font-family: 'Noto Sans KR', sans-serif; 
+            padding: 40px; 
+            -webkit-print-color-adjust: exact; 
+            print-color-adjust: exact;
+            font-size: 13px; /* 기존 대비 축소 */
+            line-height: 1.5;
+          }
+          
+          /* 컨트롤 바 스타일 (화면 전용) */
+          .print-controls {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: #f1f5f9;
+            border-bottom: 1px solid #cbd5e1;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+          }
+          
+          .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+            border: 1px solid transparent;
+          }
+          
+          .btn-print { background: #4f46e5; color: white; }
+          .btn-print:hover { background: #4338ca; }
+          
+          .btn-close { background: white; border: 1px solid #cbd5e1; color: #475569; }
+          .btn-close:hover { background: #f8fafc; }
+
+          /* 본문 패딩 조정 (상단 컨트롤 바 공간 확보) */
+          .content-wrapper { margin-top: 50px; }
+
+          /* 에디터 스타일 축소 반영 */
+          .wysiwyg-content ul { list-style-type: disc; padding-left: 20px; margin-bottom: 8px; }
+          .wysiwyg-content ol { list-style-type: decimal; padding-left: 20px; margin-bottom: 8px; }
+          .wysiwyg-content li { margin-bottom: 2px; }
+          .wysiwyg-content p { margin-bottom: 8px; line-height: 1.6; }
+          .wysiwyg-content h1 { font-size: 1.6em; font-weight: bold; margin: 16px 0 8px 0; } /* 사이즈 축소 */
+          .wysiwyg-content h2 { font-size: 1.3em; font-weight: bold; margin: 14px 0 8px 0; } /* 사이즈 축소 */
+          .wysiwyg-content table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; } /* 테이블 폰트도 축소 */
+          .wysiwyg-content th, .wysiwyg-content td { border: 1px solid #e2e8f0; padding: 6px; }
+
+          /* 제목 섹션 스타일 조정 */
+          .doc-header h1 { font-size: 24px; margin-bottom: 12px; } /* 3xl -> 24px 정도로 축소 */
+          .doc-meta { font-size: 12px; }
+
+          /* [중요] 인쇄 시 스타일 */
+          @media print {
+            body { padding: 0; font-size: 12px; } /* 인쇄 시 폰트 더 확실하게 고정 */
+            .print-controls { display: none !important; } /* 컨트롤 바 숨김 */
+            .content-wrapper { margin-top: 0; }
+          }
+        </style>
+      </head>
+      <body class="bg-white text-slate-800">
+        <!-- 인쇄 제어 버튼 영역 -->
+        <div class="print-controls">
+            <button onclick="window.close()" class="btn btn-close">닫기</button>
+            <button onclick="window.print()" class="btn btn-print">🖨️ 인쇄하기</button>
+        </div>
+
+        <div class="max-w-4xl mx-auto content-wrapper">
+          <div class="border-b-2 border-slate-800 pb-4 mb-6 doc-header">
+            <div class="flex justify-between items-start mb-3">
+               <span class="px-2 py-1 bg-slate-100 border border-slate-200 rounded text-[11px] font-bold text-slate-600">${selectedPost.category}</span>
+               <span class="text-[11px] text-slate-400">No. ${selectedPost.id}</span>
+            </div>
+            <h1 class="font-extrabold text-slate-900 leading-tight">${selectedPost.title}</h1>
+            <div class="flex items-center gap-6 doc-meta text-slate-500">
+              <div class="flex items-center gap-2">
+                <span class="font-bold text-slate-700">작성자:</span> ${selectedPost.author}
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="font-bold text-slate-700">등록일:</span> ${selectedPost.date}
+              </div>
+            </div>
+          </div>
+          
+          <div class="wysiwyg-content min-h-[200px]">
+            ${selectedPost.content}
+          </div>
+
+          <div class="mt-8 pt-4 border-t border-slate-200 text-center">
+            <p class="text-[10px] text-slate-400">위 문서는 LOUDERS 사내 시스템에서 출력되었습니다.</p>
+            <p class="text-[10px] text-slate-400 mt-1">출력일시: ${new Date().toLocaleString()}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close(); // 문서 작성을 마침 (중요)
   };
 
   // UI 핸들러
@@ -738,17 +927,82 @@ const InternalBoard = () => {
         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md animate-in fade-in zoom-in duration-300">
           <div className="text-center mb-8"><div className="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto flex items-center justify-center text-white shadow-lg mb-4"><LayoutDashboard size={32} /></div><h2 className="text-2xl font-bold text-slate-800">LOUDERS</h2><p className="text-slate-500 text-sm mt-1">사내 인트라넷 시스템 (Cloud Ver.)</p></div>
           <form onSubmit={handleLogin} className="space-y-4">
-            <div><label className="block text-xs font-bold text-slate-500 mb-1 ml-1">아이디</label><div className="relative"><User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" /><input type="text" value={loginId} onChange={(e) => setLoginId(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="아이디" /></div></div>
-            <div><label className="block text-xs font-bold text-slate-500 mb-1 ml-1">비밀번호</label><div className="relative"><Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" /><input type="password" value={loginPw} onChange={(e) => setLoginPw(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="비밀번호" /></div></div>
+            <div><label className="block text-xs font-bold text-slate-500 mb-1 ml-1">아이디</label><div className="relative"><User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" /><input type="text" value={loginId} onChange={(e) => setLoginId(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="아이디" autoComplete="username" /></div></div>
+            <div><label className="block text-xs font-bold text-slate-500 mb-1 ml-1">비밀번호</label><div className="relative"><Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" /><input type="password" value={loginPw} onChange={(e) => setLoginPw(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="비밀번호" autoComplete="current-password" /></div></div>
             <button type="submit" className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition-transform hover:scale-[1.02]">로그인</button>
           </form>
         </div>
+        {/* [추가] 로그인 화면에서도 알림창이 보이도록 추가됨 */}
+        {modalConfig.isOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200 border border-slate-100">
+                <div className="p-8 text-center">
+                <div className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center mb-4 ${modalConfig.type === 'confirm' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}><AlertCircle size={28} /></div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">{modalConfig.type === 'confirm' ? '확인해 주세요' : '알림'}</h3>
+                <p className="text-sm text-slate-500 leading-relaxed font-medium">{modalConfig.message}</p>
+                </div>
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
+                {modalConfig.type === 'confirm' && <button onClick={closeModal} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-50 transition-colors shadow-sm">취소</button>}
+                <button onClick={handleConfirmAction} className={`flex-1 px-4 py-2.5 text-white text-sm font-bold rounded-xl shadow-md transition-all transform active:scale-95 ${modalConfig.type === 'confirm' ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200' : 'bg-slate-800 hover:bg-slate-900 shadow-slate-200'}`}>확인</button>
+                </div>
+            </div>
+            </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
+      <style>{`
+        /* [수정] 인쇄용 스타일 강화 */
+        @media print {
+            /* 화면 전체 레이아웃 리셋 */
+            @page { size: auto; margin: 20mm; }
+            
+            html, body {
+                height: auto !important;
+                overflow: visible !important;
+                background: white !important;
+            }
+
+            /* 숨길 요소들: 사이드바, 헤더, 인쇄 숨김 클래스 */
+            aside, header, .print-hidden, .fixed {
+                display: none !important;
+            }
+
+            /* 메인 컨테이너 레이아웃 재정의 */
+            #root, .flex-col, .flex, main {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                overflow: visible !important;
+                position: static !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+            }
+
+            /* 실제 콘텐츠 영역 */
+            .print-content {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                margin: 0 auto !important;
+                padding: 0 !important;
+                border: none !important;
+                box-shadow: none !important;
+                overflow: visible !important;
+            }
+            
+            /* 텍스트 줄바꿈 및 색상 보존 */
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                box-shadow: none !important;
+            }
+        }
+      `}</style>
       <aside className={`absolute lg:relative w-64 bg-slate-900 border-r border-slate-800 flex-shrink-0 flex flex-col z-30 h-full transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="p-6 border-b border-slate-800 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3"><div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white shadow-lg"><LayoutDashboard size={20} /></div><span className="text-lg font-bold text-white tracking-tight">LOUDERS</span></div>
@@ -792,6 +1046,7 @@ const InternalBoard = () => {
                                 <span className="text-lg">'{searchQuery}' 검색 결과</span>
                                 <span className="text-sm bg-indigo-100 px-2 py-0.5 rounded-full text-indigo-600">{searchResults.length}건</span>
                             </div>
+                            {/* [복구] 게시판별 필터링 버튼 */}
                             {searchResults.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mt-2">
                                     <button 
@@ -860,6 +1115,7 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
+                            {/* 번호 표시 */}
                             <td className="text-center text-slate-500">{filteredPosts.length - (activePage - 1) * postsPerPage - idx}</td>
                             <td className="py-2 px-3">
                                 <div className="flex items-center gap-1.5">
@@ -957,6 +1213,34 @@ const InternalBoard = () => {
                       <button onMouseDown={(e) => handleToolbarAction('bold', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="굵게"><Bold size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('italic', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="기울임"><Italic size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('underline', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="밑줄"><Underline size={16} /></button>
+
+                      {/* [추가] 텍스트 색상 변경 (Palette) 버튼 */}
+                      <div className="relative inline-block">
+                        <button 
+                            onMouseDown={(e) => { e.preventDefault(); setShowColorPicker(!showColorPicker); }} 
+                            className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" 
+                            title="글자 색상"
+                        >
+                            <Palette size={16} />
+                        </button>
+                        {showColorPicker && (
+                            <div className="absolute top-full left-0 mt-1 p-2 bg-white border border-slate-200 rounded-lg shadow-xl grid grid-cols-5 gap-1 z-50 w-[140px]">
+                                {['#000000', '#334155', '#ef4444', '#f97316', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e'].map(color => (
+                                    <button
+                                        key={color}
+                                        onMouseDown={(e) => {
+                                            handleToolbarAction('foreColor', color, e);
+                                            setShowColorPicker(false);
+                                        }}
+                                        className="w-5 h-5 rounded-full border border-slate-200 hover:scale-125 transition-transform"
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                      </div>
+
                       <div className="w-px h-4 bg-slate-300 mx-1"></div>
                       <button onMouseDown={(e) => handleToolbarAction('justifyLeft', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="왼쪽 정렬"><AlignLeft size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('justifyCenter', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="가운데 정렬"><AlignCenter size={16} /></button>
@@ -1004,7 +1288,7 @@ const InternalBoard = () => {
 
           {/* ================= DETAIL VIEW (생략 없이 유지) ================= */}
           {viewMode === 'detail' && selectedPost && (
-            <div className="max-w-6xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className={`max-w-6xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print-content`}>
                {/* 리스트 스타일 적용을 위한 CSS */}
                <style>{`
                 .wysiwyg-content ul { list-style-type: disc; padding-left: 20px; }
@@ -1017,9 +1301,12 @@ const InternalBoard = () => {
               `}</style>
               
               {/* Top Navigation Bar */}
-              <div className="p-4 px-6 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10">
+              <div className="p-4 px-6 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10 print-hidden">
                 <button onClick={handleBackToList} className="flex items-center gap-1.5 text-slate-500 hover:text-indigo-600 font-bold text-sm transition-colors group"><ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> 목록으로 돌아가기</button>
                 <div className="flex items-center gap-2">
+                  {/* [추가] 인쇄 버튼 */}
+                  <button onClick={handlePrint} className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors"><Printer size={14} /> 출력</button>
+                  
                   {selectedPost.isDeleted ? (
                     <>
                       <button onClick={() => { showConfirm("이 게시글을 복구하시겠습니까?", () => { setPosts(posts.map(p => p.id === selectedPost.id ? { ...p, isDeleted: false } : p)); handleBackToList(); }); }} className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-green-700 bg-green-50 border border-green-100 rounded-lg hover:bg-green-100 transition-colors"><RefreshCcw size={14} /> 복구</button>
@@ -1045,7 +1332,7 @@ const InternalBoard = () => {
                         {/* 상세 페이지에서는 선택한 제목 크기를 반영 */}
                         <h1 className={`font-extrabold leading-tight mb-6 ${selectedPost.titleColor || 'text-slate-900'} ${selectedPost.titleSize || 'text-2xl'} ${selectedPost.isDeleted ? 'line-through text-slate-400' : ''}`}>{selectedPost.title}</h1>
                     </div>
-                    <button onClick={() => handleToggleBookmark(selectedPost)} className="p-2 hover:bg-white rounded-full transition-colors flex-shrink-0 mt-1">
+                    <button onClick={() => handleToggleBookmark(selectedPost)} className="p-2 hover:bg-white rounded-full transition-colors flex-shrink-0 mt-1 print-hidden">
                         <Star size={28} className={selectedPost.isBookmarked ? "fill-yellow-400 text-yellow-400" : "text-slate-300"} />
                     </button>
                 </div>
@@ -1063,7 +1350,7 @@ const InternalBoard = () => {
                 <div className="wysiwyg-content text-slate-800 text-lg px-2" dangerouslySetInnerHTML={{ __html: selectedPost.content || "본문 내용이 없습니다." }} />
                 
                 {selectedPost.attachments && selectedPost.attachments.length > 0 && (
-                  <div className="mt-16 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="mt-16 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden print-hidden">
                     <div className="px-5 py-3 border-b border-slate-200 bg-slate-100/50 flex items-center gap-2"><Paperclip size={16} className="text-slate-500" /><span className="text-sm font-bold text-slate-700">첨부파일 ({selectedPost.attachments.length})</span></div>
                     <div className="divide-y divide-slate-100">
                       {selectedPost.attachments.map((file, idx) => (
@@ -1078,7 +1365,7 @@ const InternalBoard = () => {
               </div>
 
               {/* 댓글 섹션 */}
-              <div className="bg-slate-50 border-t border-slate-200 p-8">
+              <div className="bg-slate-50 border-t border-slate-200 p-8 print-hidden">
                  <h4 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><MessageCircle size={20} /> 댓글 <span className="text-indigo-600">{selectedPost.comments?.length || 0}</span></h4>
                  <div className="space-y-4 mb-8">
                     {selectedPost.comments && selectedPost.comments.length > 0 ? (
@@ -1101,7 +1388,7 @@ const InternalBoard = () => {
             </div>
           )}
 
-          <div className="max-w-7xl mx-auto mt-6 text-right text-xs text-slate-400 font-medium">© 2026 LOUDERS Corp. All rights reserved.</div>
+          <div className="max-w-7xl mx-auto mt-6 text-right text-xs text-slate-400 font-medium print-hidden">© 2026 LOUDERS Corp. All rights reserved.</div>
         </main>
       </div>
       
