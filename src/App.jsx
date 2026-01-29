@@ -17,7 +17,7 @@ import {
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, 
-  onSnapshot, query, orderBy, writeBatch, increment, getDoc, getDocs 
+  onSnapshot, query, orderBy, writeBatch, increment, getDoc
 } from "firebase/firestore";
 
 // 선생님의 Firebase 설정값
@@ -171,23 +171,34 @@ const InternalBoard = () => {
   // [수정] 글쓰기/수정 모드로 진입 시 에디터에 기존 내용을 주입하는 Effect
   useEffect(() => {
     if (viewMode === 'write' && contentRef.current) {
+        // 이미 내용이 입력되어 있다면(예: 사용자가 입력 중) 덮어쓰지 않도록 할 수 있으나,
+        // 여기서는 수정 버튼을 눌러 들어왔을 때 초기값을 세팅하는 것이 주 목적이므로
+        // innerHTML이 비어있거나, writeForm.content와 다를 때 업데이트합니다.
+        // 다만 타이핑 중 리렌더링으로 커서 튐 방지를 위해 체크가 필요하지만, 
+        // viewMode가 변경되어 처음 렌더링될 때 한 번 실행하는 것이 가장 안전합니다.
+        
+        // 간단한 해결책: 렌더링 직후 한 번만 실행되도록 의존성을 viewMode로 설정
+        // handleEditPost에서 setWriteForm을 먼저 하므로 writeForm.content에는 이미 값이 있음
         contentRef.current.innerHTML = writeForm.content || '';
     }
-  }, [viewMode]); 
+  }, [viewMode]); // viewMode가 'write'로 바뀔 때 실행
 
   // [보안 업데이트] 검색 엔진 노출 방지 (Google, Naver 등)
   useEffect(() => {
+    // 1. 로봇 수집 거부 태그 생성 (noindex, nofollow)
     const metaRobots = document.createElement('meta');
     metaRobots.name = "robots";
     metaRobots.content = "noindex, nofollow, noarchive";
     document.head.appendChild(metaRobots);
 
+    // 2. 구글봇 특정 차단
     const metaGoogle = document.createElement('meta');
     metaGoogle.name = "googlebot";
     metaGoogle.content = "noindex, nofollow";
     document.head.appendChild(metaGoogle);
 
     return () => {
+      // 컴포넌트 해제 시 정리 (보통 SPA에서는 계속 유지되어야 하므로 큰 의미 없지만 클린업 차원)
       if(document.head.contains(metaRobots)) document.head.removeChild(metaRobots);
       if(document.head.contains(metaGoogle)) document.head.removeChild(metaGoogle);
     };
@@ -228,12 +239,15 @@ const InternalBoard = () => {
   };
 
   // [보안 업데이트] Firebase 데이터 실시간 불러오기
+  // 기존: 로그인 여부 상관없이 데이터 로드됨 -> 변경: currentUser가 있을 때만 데이터 구독
   useEffect(() => {
+    // 1. 로그인이 안 되어 있다면 데이터를 불러오지 않음 (보안 강화)
     if (!currentUser) {
-      setPosts([]); 
+      setPosts([]); // 로그아웃 상태라면 기존 데이터도 메모리에서 비움
       return; 
     }
 
+    // 2. 로그인 된 경우에만 Firestore 연결
     const q = query(collection(db, "posts"), orderBy("id", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const dbPosts = snapshot.docs.map(doc => ({
@@ -250,7 +264,7 @@ const InternalBoard = () => {
       console.error("Data fetch error:", error);
     });
     return () => unsubscribe();
-  }, [selectedPost?.id, currentUser]);
+  }, [selectedPost?.id, currentUser]); // currentUser가 변경될 때마다(로그인/로그아웃) 재실행
 
   const getActiveBoard = () => {
     if (activeBoardId === 'trash') return { id: 'trash', name: '휴지통', type: 'system' };
@@ -269,9 +283,10 @@ const InternalBoard = () => {
   const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
   const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
-  // --- 로그인/아웃 ---
+  // --- 로그인/아웃 (수정됨) ---
   const handleLogin = (e) => { 
     e.preventDefault(); 
+    // 입력값 공백 제거 (실수 방지)
     const id = loginId.trim();
     const pw = loginPw.trim();
 
@@ -279,6 +294,7 @@ const InternalBoard = () => {
     if (user) { 
         setCurrentUser(user); 
         localStorage.setItem('board_user', JSON.stringify(user));
+        // [중요] 로그인 성공 시 기존에 떠있을 수 있는 알림창을 확실히 닫음
         setModalConfig({ isOpen: false, type: '', message: '', onConfirm: null });
         setViewMode('list'); 
         setLoginId(''); 
@@ -291,7 +307,7 @@ const InternalBoard = () => {
   const handleLogout = () => showConfirm("로그아웃 하시겠습니까?", () => { 
       setCurrentUser(null); 
       localStorage.removeItem('board_user');
-      setPosts([]); 
+      setPosts([]); // 로그아웃 시 데이터 즉시 비우기
       setViewMode('login'); 
   });
 
@@ -300,25 +316,6 @@ const InternalBoard = () => {
     if (!writeForm.title.trim()) { showAlert("제목을 입력해주세요."); return; }
     const today = new Date();
     const dateString = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')} ${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
-    
-    // [수정] 새 글 작성 시 ID 부여 로직 변경
-    // 기존: Date.now() (타임스탬프) -> 변경: 현재 존재하는 글 중 가장 큰 ID + 1
-    // 이렇게 해야 번호가 1570 -> 1571 -> 1572 순서로 깔끔하게 올라갑니다.
-    
-    let newId;
-    if (writeForm.id) {
-        newId = writeForm.id; // 수정인 경우 기존 ID 유지
-    } else {
-        // 현재 활성 게시글(삭제 안 된 것) 중에서 가장 큰 번호 찾기
-        const activePosts = posts.filter(p => !p.isDeleted);
-        if (activePosts.length > 0) {
-            const maxId = Math.max(...activePosts.map(p => typeof p.id === 'number' ? p.id : 0));
-            newId = maxId + 1;
-        } else {
-            newId = 1; // 글이 하나도 없으면 1번부터 시작
-        }
-    }
-
     const postData = {
         title: writeForm.title, content: writeForm.content, titleColor: writeForm.titleColor, 
         titleSize: writeForm.titleSize, attachments: writeForm.attachments, boardId: activeBoardId, category: activeBoard.name,
@@ -328,10 +325,9 @@ const InternalBoard = () => {
             await updateDoc(doc(db, "posts", writeForm.docId), postData);
             setViewMode('detail');
         } else {
-            // 새 글 추가
+            const newId = Date.now();
             await addDoc(collection(db, "posts"), {
-                id: newId, // 위에서 계산한 순차 번호 사용
-                type: 'normal', author: currentUser ? currentUser.name : '관리자', 
+                id: newId, type: 'normal', author: currentUser ? currentUser.name : '관리자', 
                 date: dateString, views: 0, file: writeForm.attachments.length > 0, 
                 isMoved: false, isDeleted: false, isBookmarked: false, comments: [], ...postData
             });
@@ -530,23 +526,25 @@ const InternalBoard = () => {
   // --- 대용량 일괄 저장 로직 ---
   const saveImportedDataToDB = async (importedPosts) => {
     try {
-        // 1. 기존 데이터 완벽 삭제
-        const snapshot = await getDocs(collection(db, "posts"));
-        const allDocs = snapshot.docs;
-        
+        // 1. 기존 데이터 삭제
         const deleteChunkSize = 400; 
         const deleteBatches = [];
         
-        for (let i = 0; i < allDocs.length; i += deleteChunkSize) {
+        for (let i = 0; i < posts.length; i += deleteChunkSize) {
             const batch = writeBatch(db);
-            const chunk = allDocs.slice(i, i + deleteChunkSize);
-            chunk.forEach(docSnap => {
-                batch.delete(docSnap.ref);
+            const chunk = posts.slice(i, i + deleteChunkSize);
+            let hasOp = false;
+            chunk.forEach(post => {
+                if (post.docId) {
+                    const ref = doc(db, "posts", post.docId);
+                    batch.delete(ref);
+                    hasOp = true;
+                }
             });
-            deleteBatches.push(batch.commit());
+            if (hasOp) deleteBatches.push(batch.commit());
         }
         
-        await Promise.all(deleteBatches); 
+        await Promise.all(deleteBatches);
 
         // 2. 새 데이터 추가
         const addChunkSize = 400;
@@ -562,6 +560,7 @@ const InternalBoard = () => {
                 
                 const dataToSave = {
                     ...postData,
+                    id: post.id || Date.now(),
                     date: post.date || getTodayString(),
                     views: post.views || 0,
                     type: post.type || 'normal',
@@ -589,21 +588,16 @@ const InternalBoard = () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
     
-    // [수정] 엑셀 다운로드 시 번호 재정렬 (Renumbering)
-    // 17382 같은 타임스탬프 ID 대신, 총 개수(예: 1570)부터 1까지 역순으로 번호를 새로 부여
     const activePosts = posts.filter(p => !p.isDeleted);
-    const totalCount = activePosts.length;
-
     const data = activePosts.map((p, idx) => ({
-        // 최신 글(index 0)이 가장 높은 번호(totalCount)를 가져야 함
-        '번호': totalCount - idx, 
+        '번호': p.id, 
         '분류': p.category, 
         '제목': p.title, 
         '작성자': p.author, 
         '등록일': p.date, 
         '조회수': p.views, 
         '내용': htmlToTextWithLineBreaks(p.content),
-        'SystemID': p.id // 참고용으로 실제 ID도 저장할 수 있음 (선택)
+        'SystemID': p.id 
     }));
     
     const ws = XLSX_LIB.utils.json_to_sheet(data);
@@ -635,34 +629,29 @@ const InternalBoard = () => {
         const boardNameMap = {}; 
         categories.forEach(cat => cat.boards.forEach(board => boardNameMap[board.name] = board.id));
         
-        // [수정] 엑셀의 '번호'를 게시판 ID로 그대로 사용 (깔끔하게 1~1570 적용)
-        const parsedPosts = jsonData.filter(row => row['제목']).map((row, index) => {
-            let newId;
-            if (row['번호']) {
-                newId = Number(row['번호']);
-            } else if (row['SystemID']) {
-                newId = Number(row['SystemID']);
-            } else {
-                // 번호가 없으면 전체 길이 - 인덱스로 강제 부여
-                newId = jsonData.length - index;
-            }
+        // [수정] 엑셀 데이터의 순서(위->아래)를 보장하기 위한 타임스탬프 기반 ID 생성
+        // 게시판은 ID 역순(내림차순)으로 정렬되므로, 엑셀의 첫 번째 행(index 0)이 가장 큰 ID를 가져야 합니다.
+        const baseTimestamp = Date.now();
 
-            return {
-                id: newId, 
-                category: row['분류'] || '기타', 
-                boardId: boardNameMap[row['분류']] || 11,
-                title: row['제목'], 
-                author: row['작성자'] || '익명', 
-                date: row['등록일'] || getTodayString(), 
-                views: row['조회수'] || 0,
-                content: row['내용'] ? textToHtmlWithLineBreaks(row['내용']) : '', 
-                type: 'normal', file: false, attachments: [], 
-                titleColor: 'text-slate-900', titleSize: 'text-[14pt]', 
-                isMoved: false, isDeleted: false, isBookmarked: false, comments: []
-            };
-        });
+        const parsedPosts = jsonData.filter(row => row['제목']).map((row, index) => ({
+            // 엑셀의 순서를 강제로 따르도록 ID 재설정
+            // 첫 번째 행(index 0) -> baseTimestamp + 전체길이
+            // 마지막 행 -> baseTimestamp + 1
+            id: baseTimestamp + (jsonData.length - index),
+            
+            category: row['분류'] || '기타', 
+            boardId: boardNameMap[row['분류']] || 11,
+            title: row['제목'], 
+            author: row['작성자'] || '익명', 
+            date: row['등록일'] || getTodayString(), 
+            views: row['조회수'] || 0,
+            content: row['내용'] ? textToHtmlWithLineBreaks(row['내용']) : '', 
+            type: 'normal', file: false, attachments: [], 
+            titleColor: 'text-slate-900', titleSize: 'text-[14pt]', 
+            isMoved: false, isDeleted: false, isBookmarked: false, comments: []
+        }));
         
-        showConfirm(`주의: 기존 게시글을 모두 삭제하고\n엑셀 데이터 ${parsedPosts.length}건으로 교체하시겠습니까?\n(엑셀의 '번호'가 ID로 적용되어 순서가 정리됩니다)`, () => { 
+        showConfirm(`주의: 기존 게시글을 모두 삭제하고\n엑셀 데이터 ${parsedPosts.length}건으로 교체하시겠습니까?\n(엑셀 파일의 순서대로 등록됩니다)`, () => { 
             saveImportedDataToDB(parsedPosts);
         });
       } catch (error) { showAlert("엑셀 처리 오류: " + error.message); }
@@ -1127,7 +1116,7 @@ const InternalBoard = () => {
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
                             {/* 번호 표시 */}
-                            <td className="text-center text-slate-500">{post.id}</td>
+                            <td className="text-center text-slate-500">{filteredPosts.length - (activePage - 1) * postsPerPage - idx}</td>
                             <td className="py-2 px-3">
                                 <div className="flex items-center gap-1.5">
                                     {/* [수정] 검색 모드나 휴지통에서 게시판 이름 UI 추가 */}
@@ -1570,7 +1559,7 @@ const InternalBoard = () => {
                                           <FileSpreadsheet size={20} />
                                       </div>
                                       <span className="text-sm font-bold text-slate-700 group-hover:text-green-700">Excel 파일로 저장</span>
-                                      <span className="text-xs text-slate-400 mt-1">(.xlsx) - 번호가 1~N으로 재정렬됩니다.</span>
+                                      <span className="text-xs text-slate-400 mt-1">(.xlsx) - 줄바꿈 유지</span>
                                   </button>
                                   
                                   <button onClick={handleExportJSON} className="flex flex-col items-center justify-center p-4 border border-slate-200 rounded-xl hover:bg-yellow-50 hover:border-yellow-200 transition-all group">
