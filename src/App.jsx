@@ -7,7 +7,7 @@ import {
   Eye, Calendar, UserCircle, ArrowLeft, Edit, ArrowUp, ArrowDown, CheckSquare, AlertCircle, 
   ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Sparkles, Loader2,
   Heading1, Heading2, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
-  ChevronsLeft, ChevronsRight, Printer 
+  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw
 } from 'lucide-react';
 
 // [중요] 로컬(내 컴퓨터)에서 실행할 때는 아래 줄의 주석(//)을 지우고 사용하세요!
@@ -80,6 +80,9 @@ const InternalBoard = () => {
 
   // 엑셀 라이브러리 로드 상태
   const [isXlsxLoaded, setIsXlsxLoaded] = useState(false);
+
+  // [추가] 데이터 처리 중 로딩 상태
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // 게시판 카테고리
   const [categories, setCategories] = useState([
@@ -248,7 +251,9 @@ const InternalBoard = () => {
     }
 
     // 2. 로그인 된 경우에만 Firestore 연결
+    // [요청 반영] limit(500) 제한 제거하여 전체 데이터 조회
     const q = query(collection(db, "posts"), orderBy("id", "desc"));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const dbPosts = snapshot.docs.map(doc => ({
         ...doc.data(),
@@ -420,10 +425,18 @@ const InternalBoard = () => {
   };
 
   const handlePostClick = async (post) => {
-    if (post.docId) {
+    // [데이터 최적화] 조회수 중복 증가 방지 (쓰기 비용 절감)
+    // 세션 스토리지(브라우저 닫을 때까지 유지)를 활용하여 같은 글을 여러 번 클릭해도 조회수가 1번만 오르도록 함
+    const storageKey = `read_post_${post.docId}`;
+    const alreadyRead = sessionStorage.getItem(storageKey);
+
+    if (post.docId && !alreadyRead) {
         const postRef = doc(db, "posts", post.docId);
-        updateDoc(postRef, { views: increment(1) });
+        // 비동기 처리하되 UI 지연을 막기 위해 await를 굳이 기다리지 않음
+        updateDoc(postRef, { views: increment(1) }).catch(console.error);
+        sessionStorage.setItem(storageKey, 'true');
     }
+
     setSelectedPost(post);
     setViewMode('detail');
   };
@@ -525,6 +538,7 @@ const InternalBoard = () => {
 
   // --- 대용량 일괄 저장 로직 ---
   const saveImportedDataToDB = async (importedPosts) => {
+    setIsProcessing(true); // [수정] 로딩 시작
     try {
         // 1. 기존 데이터 삭제
         const deleteChunkSize = 400; 
@@ -577,8 +591,11 @@ const InternalBoard = () => {
         }
         
         await Promise.all(addBatches);
+        
+        setIsProcessing(false); // [수정] 로딩 종료 (알림 전)
         showAlert(`기존 데이터를 삭제하고 총 ${importedPosts.length}건의 데이터를 성공적으로 업로드했습니다.`);
     } catch (e) {
+        setIsProcessing(false); // [수정] 에러 시에도 로딩 종료
         console.error(e);
         showAlert("데이터 처리 중 오류가 발생했습니다: " + e.message);
     }
@@ -590,14 +607,14 @@ const InternalBoard = () => {
     
     const activePosts = posts.filter(p => !p.isDeleted);
     const data = activePosts.map((p, idx) => ({
-        '번호': p.id, 
+        '번호': activePosts.length - idx, // [수정] 번호 역순 (전체 갯수부터 1까지)
         '분류': p.category, 
         '제목': p.title, 
         '작성자': p.author, 
         '등록일': p.date, 
         '조회수': p.views, 
         '내용': htmlToTextWithLineBreaks(p.content),
-        'SystemID': p.id 
+        'SystemID': activePosts.length - idx // [수정] 번호 역순 (전체 갯수부터 1까지)
     }));
     
     const ws = XLSX_LIB.utils.json_to_sheet(data);
@@ -1203,8 +1220,14 @@ const InternalBoard = () => {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">내용</label>
                   <div className="border border-slate-300 rounded-xl overflow-hidden transition-all focus-within:ring-2 focus-within:ring-indigo-500 h-[500px] flex flex-col shadow-sm">
-                    {/* 에디터 툴바 */}
+                    {/* 에디터 툴바 - 전체 기능 복구됨 */}
                     <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex items-center gap-1.5 flex-shrink-0 flex-wrap relative">
+                        {/* [추가] 실행 취소/다시 실행 */}
+                        <div className="flex items-center gap-0.5 border-r border-slate-200 pr-1.5 mr-1.5">
+                             <button onMouseDown={(e) => handleToolbarAction('undo', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="실행 취소"><RotateCcw size={14} /></button>
+                             <button onMouseDown={(e) => handleToolbarAction('redo', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="다시 실행"><RotateCw size={14} /></button>
+                        </div>
+
                         <div className="flex items-center gap-0.5 border-r border-slate-200 pr-1.5 mr-1.5">
                             <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H1', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 1"><Heading1 size={16} /></button>
                             <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H2', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 2"><Heading2 size={16} /></button>
@@ -1213,8 +1236,10 @@ const InternalBoard = () => {
                       <button onMouseDown={(e) => handleToolbarAction('bold', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="굵게"><Bold size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('italic', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="기울임"><Italic size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('underline', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="밑줄"><Underline size={16} /></button>
+                      {/* [추가] 취소선 */}
+                      <button onMouseDown={(e) => handleToolbarAction('strikeThrough', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="취소선"><Strikethrough size={16} /></button>
 
-                      {/* [추가] 텍스트 색상 변경 (Palette) 버튼 */}
+                      {/* 텍스트 색상 변경 (Palette) 버튼 */}
                       <div className="relative inline-block">
                         <button 
                             onMouseDown={(e) => { e.preventDefault(); setShowColorPicker(!showColorPicker); }} 
@@ -1241,6 +1266,30 @@ const InternalBoard = () => {
                         )}
                       </div>
 
+                      {/* [추가] 폰트 크기 조절 버튼 */}
+                      <div className="relative inline-block">
+                         <button 
+                            onMouseDown={(e) => { e.preventDefault(); setShowFontSizePicker(!showFontSizePicker); }} 
+                            className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" 
+                            title="글자 크기"
+                        >
+                            <Type size={16} />
+                        </button>
+                        {showFontSizePicker && (
+                             <div className="absolute top-full left-0 mt-1 p-1 bg-white border border-slate-200 rounded-lg shadow-xl flex flex-col z-50 w-[100px]">
+                                {['10px', '12px', '14px', '16px', '18px', '24px', '32px'].map((size) => (
+                                    <button
+                                        key={size}
+                                        onMouseDown={(e) => handleToolbarAction('customFontSize', size, e)}
+                                        className="text-left px-3 py-1.5 text-xs hover:bg-slate-50 text-slate-700 font-medium"
+                                    >
+                                        {size}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                      </div>
+
                       <div className="w-px h-4 bg-slate-300 mx-1"></div>
                       <button onMouseDown={(e) => handleToolbarAction('justifyLeft', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="왼쪽 정렬"><AlignLeft size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('justifyCenter', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="가운데 정렬"><AlignCenter size={16} /></button>
@@ -1251,7 +1300,6 @@ const InternalBoard = () => {
                       <button onMouseDown={(e) => handleToolbarAction('indent', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="들여쓰기"><Indent size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('outdent', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="내어쓰기"><Outdent size={16} /></button>
                       <div className="w-px h-4 bg-slate-300 mx-1"></div>
-                      {/* ... 기타 툴바 버튼 (생략 없이 유지) */}
                       <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600 relative" title="파일 첨부"><Paperclip size={16} /><input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" multiple /></button>
                     </div>
                     {/* 위지윅 에디터 영역 */}
@@ -1662,6 +1710,14 @@ const InternalBoard = () => {
               <button onClick={handleConfirmAction} className={`flex-1 px-4 py-2.5 text-white text-sm font-bold rounded-xl shadow-md transition-all transform active:scale-95 ${modalConfig.type === 'confirm' ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200' : 'bg-slate-800 hover:bg-slate-900 shadow-slate-200'}`}>확인</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* [추가] 데이터 처리 중 로딩 화면 */}
+      {isProcessing && (
+        <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center flex-col gap-4 backdrop-blur-sm">
+            <Loader2 className="w-12 h-12 text-white animate-spin" />
+            <p className="text-white font-bold text-lg">데이터 처리 중입니다... 잠시만 기다려주세요.</p>
         </div>
       )}
     </div>
