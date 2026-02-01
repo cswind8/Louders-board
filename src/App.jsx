@@ -36,27 +36,6 @@ const db = getFirestore(app);
 // 캐시 키 상수
 const CACHE_KEY_PREFIX = 'board_cache_v3_';
 
-// [비상용] 할당량 초과 시 보여줄 데모 데이터
-const MOCK_POSTS = Array.from({ length: 10 }).map((_, i) => ({
-    id: 9999 - i,
-    docId: `mock_${i}`,
-    boardId: 11,
-    category: '시스템',
-    title: `[안내] 일일 사용량이 초과되어 데모 모드로 실행 중입니다 (${i + 1})`,
-    author: '관리자',
-    date: new Date().toLocaleDateString(),
-    views: 0,
-    content: '<p style="color:red; font-weight:bold;">Firebase 무료 할당량(Quota)이 초과되었습니다.</p><p>현재 실제 데이터베이스가 아닌 임시 데이터를 보여주고 있습니다.<br>내일 할당량이 초기화되면 정상적으로 데이터가 표시됩니다.</p>',
-    type: 'notice',
-    file: false,
-    isDeleted: false,
-    isBookmarked: false,
-    comments: [],
-    titleColor: 'text-rose-600',
-    titleSize: 'text-[14pt]',
-    attachments: []
-}));
-
 // 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
   const blob = new Blob([content], { type: mimeType });
@@ -325,16 +304,7 @@ const InternalBoard = () => {
         
     } catch (error) {
         console.error("Error fetching posts:", error);
-        
-        // [수정] Quota exceeded 에러 처리 로직 추가
-        if (error.message.includes("Quota exceeded") || error.code === 'resource-exhausted') {
-             showAlert("⚠️ 일일 무료 사용량(5만회)이 초과되었습니다.\n임시 데모 데이터로 전환합니다.\n(내일 다시 정상 이용 가능)");
-             setPosts(MOCK_POSTS); // 데모 데이터 로드
-             setTotalCount(MOCK_POSTS.length);
-             setHasMore(false);
-        } else {
-             showAlert("데이터 로딩 실패: " + error.message);
-        }
+        showAlert("데이터 로딩 실패: " + error.message);
     } finally {
         setIsLoadingPosts(false);
     }
@@ -388,9 +358,6 @@ const InternalBoard = () => {
         }
     } catch (error) {
         console.error("Error fetching more posts:", error);
-        if (error.message.includes("Quota exceeded") || error.code === 'resource-exhausted') {
-            showAlert("일일 사용량이 초과되어 더 이상 불러올 수 없습니다.");
-        }
     } finally {
         setIsLoadingPosts(false);
     }
@@ -482,14 +449,7 @@ const InternalBoard = () => {
         }
         localStorage.removeItem('internalBoard_temp');
         setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] });
-    } catch (e) { 
-        console.error(e); 
-        if (e.message.includes("Quota exceeded") || e.code === 'resource-exhausted') {
-            showAlert("일일 사용량 초과로 저장할 수 없습니다.\n(내일 다시 시도해주세요)");
-        } else {
-            showAlert("저장 실패: " + e.message);
-        }
-    }
+    } catch (e) { console.error(e); showAlert("저장 실패: " + e.message); }
   };
 
   const handleDeletePost = async () => {
@@ -979,14 +939,7 @@ const InternalBoard = () => {
           setSearchFilterBoardId('all'); 
           setActivePage(1);
       } catch(e) {
-          if (e.message.includes("Quota exceeded") || e.code === 'resource-exhausted') {
-              showAlert("일일 사용량이 초과되어 검색을 수행할 수 없습니다.\n데모 데이터를 표시합니다.");
-              setPosts(MOCK_POSTS);
-              setSearchQuery('데모 검색');
-              setViewMode('search');
-          } else {
-              showAlert("검색 중 오류 발생: " + e.message);
-          }
+          showAlert("검색 중 오류 발생: " + e.message);
       } finally {
           setIsLoadingPosts(false);
       }
