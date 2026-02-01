@@ -14,7 +14,8 @@ import {
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, 
-  getDocs, query, orderBy, writeBatch, increment, limit, startAfter
+  getDocs, query, orderBy, writeBatch, increment, limit, startAfter, 
+  getCountFromServer, where
 } from "firebase/firestore";
 
 // 선생님의 Firebase 설정값
@@ -31,6 +32,30 @@ const firebaseConfig = {
 // Firebase 초기화
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+// 캐시 키 상수
+const CACHE_KEY_PREFIX = 'board_cache_v3_';
+
+// [비상용] 할당량 초과 시 보여줄 데모 데이터
+const MOCK_POSTS = Array.from({ length: 10 }).map((_, i) => ({
+    id: 9999 - i,
+    docId: `mock_${i}`,
+    boardId: 11,
+    category: '시스템',
+    title: `[안내] 일일 사용량이 초과되어 데모 모드로 실행 중입니다 (${i + 1})`,
+    author: '관리자',
+    date: new Date().toLocaleDateString(),
+    views: 0,
+    content: '<p style="color:red; font-weight:bold;">Firebase 무료 할당량(Quota)이 초과되었습니다.</p><p>현재 실제 데이터베이스가 아닌 임시 데이터를 보여주고 있습니다.<br>내일 할당량이 초기화되면 정상적으로 데이터가 표시됩니다.</p>',
+    type: 'notice',
+    file: false,
+    isDeleted: false,
+    isBookmarked: false,
+    comments: [],
+    titleColor: 'text-rose-600',
+    titleSize: 'text-[14pt]',
+    attachments: []
+}));
 
 // 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
@@ -66,9 +91,9 @@ const InternalBoard = () => {
 
   // 게시글 데이터
   const [posts, setPosts] = useState([]);
-  const [lastVisible, setLastVisible] = useState(null); // [최적화] 페이징 처리를 위한 커서
-  const [hasMore, setHasMore] = useState(true); // [최적화] 더 불러올 데이터가 있는지 여부
-  const [isLoadingPosts, setIsLoadingPosts] = useState(false); // [최적화] 로딩 상태
+  const [totalCount, setTotalCount] = useState(0); // [추가] 전체 게시글 수 (번호 표시용)
+  const [hasMore, setHasMore] = useState(true); 
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   
   // 선택된 게시글 및 체크박스
   const [selectedPost, setSelectedPost] = useState(null);
@@ -223,21 +248,65 @@ const InternalBoard = () => {
     return null;
   };
 
-  // [비용 최적화 적용된 데이터 불러오기]
-  // onSnapshot(실시간) 제거 -> getDocs(1회성) + limit(제한) 사용
-  const fetchInitialPosts = async () => {
+  // [캐시 관리 함수]
+  const clearCache = () => {
+    Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith(CACHE_KEY_PREFIX)) {
+            sessionStorage.removeItem(key);
+        }
+    });
+  };
+
+  // [비용 최적화 v3: 캐시 + 카운트 분리]
+  const fetchInitialPosts = async (forceRefresh = false) => {
     if (!currentUser) { setPosts([]); return; }
     
+    // 게시판 필터 조건 생성
+    let constraints = [orderBy("id", "desc")];
+    if (activeBoardId === 'trash') {
+        constraints.unshift(where("isDeleted", "==", true));
+    } else if (activeBoardId === 'bookmark') {
+        constraints.unshift(where("isBookmarked", "==", true));
+        constraints.unshift(where("isDeleted", "==", false)); // 북마크도 삭제된건 제외
+    } else if (activeBoardId) {
+        constraints.unshift(where("boardId", "==", activeBoardId));
+        constraints.unshift(where("isDeleted", "==", false));
+    }
+
+    // 캐시 키 생성 (게시판 ID에 따라 다르게 저장)
+    const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
+
+    // 1. 캐시 확인 (강제 새로고침이 아닐 때만)
+    if (!forceRefresh) {
+        const cachedData = sessionStorage.getItem(cacheKey);
+        if (cachedData) {
+            try {
+                const { posts, totalCount, timestamp } = JSON.parse(cachedData);
+                // 30분 이내 데이터면 캐시 사용
+                if (Date.now() - timestamp < 30 * 60 * 1000) {
+                    setPosts(posts);
+                    setTotalCount(totalCount);
+                    setHasMore(posts.length < totalCount);
+                    return; // DB 요청 없이 종료 (비용 0)
+                }
+            } catch (e) { console.error("Cache parsing error", e); }
+        }
+    }
+
     setIsLoadingPosts(true);
     try {
-        // [중요] 처음에는 최신글 50개만 불러옵니다. (1600개 다 불러오면 비용 폭탄)
-        const q = query(
-            collection(db, "posts"), 
-            orderBy("id", "desc"), 
-            limit(50)
-        );
-        
-        const documentSnapshots = await getDocs(q);
+        const postsRef = collection(db, "posts");
+
+        // 2. 전체 개수 세기 (저비용: 1000개당 1 읽기)
+        // 주의: getCountFromServer는 쿼리 결과의 개수만 가져옵니다.
+        const countQuery = query(postsRef, ...constraints);
+        const snapshotCount = await getCountFromServer(countQuery);
+        const serverTotalCount = snapshotCount.data().count;
+        setTotalCount(serverTotalCount);
+
+        // 3. 데이터 가져오기 (50개 제한)
+        const dataQuery = query(postsRef, ...constraints, limit(50));
+        const documentSnapshots = await getDocs(dataQuery);
         
         const loadedPosts = documentSnapshots.docs.map(doc => ({
             ...doc.data(),
@@ -245,31 +314,52 @@ const InternalBoard = () => {
         }));
         
         setPosts(loadedPosts);
+        setHasMore(loadedPosts.length === 50);
         
-        // 다음 페이지 로딩을 위해 마지막 문서 저장
-        const lastVisibleDoc = documentSnapshots.docs[documentSnapshots.docs.length - 1];
-        setLastVisible(lastVisibleDoc);
-        setHasMore(documentSnapshots.docs.length === 50); // 50개를 꽉 채워 가져왔다면 더 있을 가능성 높음
+        // 4. 캐시 저장
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+            posts: loadedPosts,
+            totalCount: serverTotalCount,
+            timestamp: Date.now()
+        }));
         
     } catch (error) {
         console.error("Error fetching posts:", error);
-        showAlert("데이터 로딩 실패: " + error.message);
+        
+        // [수정] Quota exceeded 에러 처리 로직 추가
+        if (error.message.includes("Quota exceeded") || error.code === 'resource-exhausted') {
+             showAlert("⚠️ 일일 무료 사용량(5만회)이 초과되었습니다.\n임시 데모 데이터로 전환합니다.\n(내일 다시 정상 이용 가능)");
+             setPosts(MOCK_POSTS); // 데모 데이터 로드
+             setTotalCount(MOCK_POSTS.length);
+             setHasMore(false);
+        } else {
+             showAlert("데이터 로딩 실패: " + error.message);
+        }
     } finally {
         setIsLoadingPosts(false);
     }
   };
 
-  // [추가] 더 보기 버튼 클릭 시 추가 데이터 로드 (비용 절약)
+  // 더 보기 (페이지네이션)
   const fetchMorePosts = async () => {
-    if (!lastVisible) return;
+    if (posts.length === 0) return;
     
     setIsLoadingPosts(true);
     try {
+        const lastPost = posts[posts.length - 1];
+        
+        // 쿼리 재구성
+        let constraints = [orderBy("id", "desc")];
+        if (activeBoardId === 'trash') constraints.unshift(where("isDeleted", "==", true));
+        else if (activeBoardId === 'bookmark') { constraints.unshift(where("isBookmarked", "==", true)); constraints.unshift(where("isDeleted", "==", false)); }
+        else if (activeBoardId) { constraints.unshift(where("boardId", "==", activeBoardId)); constraints.unshift(where("isDeleted", "==", false)); }
+
+        // startAfter에 id 사용 (커서)
         const q = query(
             collection(db, "posts"), 
-            orderBy("id", "desc"), 
-            startAfter(lastVisible), // 마지막 문서 다음부터
-            limit(50) // 50개 추가 로드
+            ...constraints,
+            startAfter(lastPost.id), 
+            limit(50) 
         );
         
         const documentSnapshots = await getDocs(q);
@@ -280,15 +370,27 @@ const InternalBoard = () => {
                 docId: doc.id 
             }));
             
-            setPosts(prev => [...prev, ...newPosts]);
-            const newLastVisible = documentSnapshots.docs[documentSnapshots.docs.length - 1];
-            setLastVisible(newLastVisible);
-            setHasMore(documentSnapshots.docs.length === 50);
+            // 기존 포스트에 추가
+            const updatedPosts = [...posts, ...newPosts];
+            setPosts(updatedPosts);
+            setHasMore(newPosts.length === 50);
+
+            // 캐시 업데이트 (더 불러온 내용도 캐시에 저장해야 나중에 돌아올때 유지됨)
+            const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
+            sessionStorage.setItem(cacheKey, JSON.stringify({
+                posts: updatedPosts,
+                totalCount: totalCount,
+                timestamp: Date.now()
+            }));
+
         } else {
             setHasMore(false);
         }
     } catch (error) {
         console.error("Error fetching more posts:", error);
+        if (error.message.includes("Quota exceeded") || error.code === 'resource-exhausted') {
+            showAlert("일일 사용량이 초과되어 더 이상 불러올 수 없습니다.");
+        }
     } finally {
         setIsLoadingPosts(false);
     }
@@ -296,14 +398,13 @@ const InternalBoard = () => {
 
   // [수정] useEffect 의존성 배열에서 selectedPost 제거 (클릭시 재로딩 방지)
   useEffect(() => {
-    fetchInitialPosts();
-    // selectedPost?.id 제거됨 -> 상세글 봐도 목록 다시 안 부름
-  }, [currentUser]); 
+    fetchInitialPosts(false); // 캐시 우선 사용
+  }, [currentUser, activeBoardId]); // 게시판 바뀔때만 로딩
   
   // [수정] 수동 새로고침 버튼 핸들러
   const handleRefresh = () => {
     setActivePage(1);
-    fetchInitialPosts();
+    fetchInitialPosts(true); // 강제 새로고침
     showAlert("최신 목록을 불러왔습니다.");
   };
 
@@ -345,6 +446,7 @@ const InternalBoard = () => {
       setCurrentUser(null); 
       localStorage.removeItem('board_user');
       setPosts([]); 
+      clearCache(); // 로그아웃 시 캐시 삭제
       setViewMode('login'); 
   });
 
@@ -357,9 +459,11 @@ const InternalBoard = () => {
         titleSize: writeForm.titleSize, attachments: writeForm.attachments, boardId: activeBoardId, category: activeBoard.name,
     };
     try {
+        clearCache(); // 글 작성/수정 시 캐시 무효화 (다음 로딩때 새로 읽도록)
+
         if (writeForm.docId) {
             await updateDoc(doc(db, "posts", writeForm.docId), postData);
-            // [최적화] 로컬 스테이트 업데이트 (재로딩 방지)
+            // 로컬 스테이트 업데이트
             setPosts(posts.map(p => p.docId === writeForm.docId ? { ...p, ...postData } : p));
             setViewMode('detail');
         } else {
@@ -371,28 +475,41 @@ const InternalBoard = () => {
             };
             // DB 저장
             const docRef = await addDoc(collection(db, "posts"), newPost);
-            // [최적화] 로컬 스테이트 맨 앞에 추가 (재로딩 방지)
+            // 로컬 스테이트 맨 앞에 추가
             setPosts([{ ...newPost, docId: docRef.id }, ...posts]);
+            setTotalCount(prev => prev + 1); // 작성 시 카운트 +1
             setViewMode('list');
         }
         localStorage.removeItem('internalBoard_temp');
         setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] });
-    } catch (e) { console.error(e); showAlert("저장 실패: " + e.message); }
+    } catch (e) { 
+        console.error(e); 
+        if (e.message.includes("Quota exceeded") || e.code === 'resource-exhausted') {
+            showAlert("일일 사용량 초과로 저장할 수 없습니다.\n(내일 다시 시도해주세요)");
+        } else {
+            showAlert("저장 실패: " + e.message);
+        }
+    }
   };
 
   const handleDeletePost = async () => {
     if (!selectedPost) return;
     try {
+        clearCache(); // 삭제 시 캐시 무효화
         if (activeBoardId === 'trash') {
             showConfirm("정말로 영구 삭제하시겠습니까?", async () => {
                 await deleteDoc(doc(db, "posts", selectedPost.docId));
-                setPosts(posts.filter(p => p.docId !== selectedPost.docId)); // 로컬 반영
+                setPosts(posts.filter(p => p.docId !== selectedPost.docId)); 
+                setTotalCount(prev => prev - 1);
                 handleBackToList();
             });
         } else {
             showConfirm("휴지통으로 이동하시겠습니까?", async () => {
                 await updateDoc(doc(db, "posts", selectedPost.docId), { isDeleted: true });
-                setPosts(posts.map(p => p.docId === selectedPost.docId ? { ...p, isDeleted: true } : p)); // 로컬 반영
+                setPosts(posts.map(p => p.docId === selectedPost.docId ? { ...p, isDeleted: true } : p)); 
+                // 휴지통 이동은 현재 리스트에서 안보이게 되므로 카운트 -1
+                setPosts(posts.filter(p => p.docId !== selectedPost.docId));
+                setTotalCount(prev => prev - 1);
                 handleBackToList();
             });
         }
@@ -402,6 +519,7 @@ const InternalBoard = () => {
   const handleDeleteSelected = () => {
       if (selectedIds.length === 0) return;
       const processBatch = async (actionType) => {
+          clearCache(); // 일괄 처리 시 캐시 무효화
           const batch = writeBatch(db);
           const targets = posts.filter(p => selectedIds.includes(p.docId));
           targets.forEach(p => {
@@ -412,13 +530,18 @@ const InternalBoard = () => {
           });
           await batch.commit();
           
-          // [최적화] 로컬 상태 업데이트
-          if (actionType === 'del') {
+          // 로컬 상태 업데이트
+          if (actionType === 'del' || actionType === 'soft') {
             setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
-          } else if (actionType === 'soft') {
-            setPosts(posts.map(p => selectedIds.includes(p.docId) ? { ...p, isDeleted: true } : p));
+            setTotalCount(prev => prev - selectedIds.length);
           } else {
+            // 복구
             setPosts(posts.map(p => selectedIds.includes(p.docId) ? { ...p, isDeleted: false } : p));
+            // 복구 시 리스트에서 제거됨 (휴지통 기준)
+            if (activeBoardId === 'trash') {
+                 setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
+                 setTotalCount(prev => prev - selectedIds.length);
+            }
           }
           
           setSelectedIds([]);
@@ -431,12 +554,16 @@ const InternalBoard = () => {
   const handleRestoreSelected = () => {
       if (selectedIds.length === 0) return;
       showConfirm("선택한 게시글을 복구하시겠습니까?", async () => {
+          clearCache();
           const batch = writeBatch(db);
           const targets = posts.filter(p => selectedIds.includes(p.docId));
           targets.forEach(p => batch.update(doc(db, "posts", p.docId), { isDeleted: false }));
           await batch.commit();
-          // 로컬 업데이트
-          setPosts(posts.map(p => selectedIds.includes(p.docId) ? { ...p, isDeleted: false } : p));
+          
+          if (activeBoardId === 'trash') {
+               setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
+               setTotalCount(prev => prev - selectedIds.length);
+          }
           setSelectedIds([]);
       });
   };
@@ -493,7 +620,8 @@ const InternalBoard = () => {
         newPosts.sort((a, b) => b.id - a.id);
         setPosts(newPosts);
         
-        // 알림창 제거하고 조용히 완료
+        // 이동 후 캐시 갱신
+        clearCache();
     }
   };
 
@@ -517,6 +645,7 @@ const InternalBoard = () => {
     try { 
         await updateDoc(doc(db, "posts", post.docId), { isBookmarked: !post.isBookmarked }); 
         setPosts(posts.map(p => p.docId === post.docId ? { ...p, isBookmarked: !post.isBookmarked } : p));
+        clearCache(); // 상태 변경 시 캐시 무효화
     } catch (e) { console.error(e); }
   };
 
@@ -625,13 +754,12 @@ const InternalBoard = () => {
   const saveImportedDataToDB = async (importedPosts) => {
     setIsProcessing(true); 
     try {
+        clearCache(); // 대량 업데이트 시 캐시 삭제
+
         // 기존 데이터 삭제 (주의: 1600개 삭제 시 1600 쓰기 비용 발생)
         const deleteChunkSize = 400; 
         const deleteBatches = [];
         
-        // 현재 로드된 것만 삭제하는게 아니라 전체를 삭제해야 한다면 로직이 복잡해짐.
-        // 여기서는 메모리에 있는 것만 삭제하도록 되어 있으나, DB 전체 삭제는 별도 쿼리 필요.
-        // 편의상 현재 posts에 있는 것만 삭제 시도.
         for (let i = 0; i < posts.length; i += deleteChunkSize) {
             const batch = writeBatch(db);
             const chunk = posts.slice(i, i + deleteChunkSize);
@@ -682,7 +810,7 @@ const InternalBoard = () => {
         
         setIsProcessing(false); 
         showAlert(`기존 데이터를 삭제하고 총 ${importedPosts.length}건의 데이터를 성공적으로 업로드했습니다.`);
-        fetchInitialPosts(); // 저장 후 새로고침
+        fetchInitialPosts(true); // 저장 후 강제 새로고침
     } catch (e) {
         setIsProcessing(false); 
         console.error(e);
@@ -851,7 +979,14 @@ const InternalBoard = () => {
           setSearchFilterBoardId('all'); 
           setActivePage(1);
       } catch(e) {
-          showAlert("검색 중 오류 발생: " + e.message);
+          if (e.message.includes("Quota exceeded") || e.code === 'resource-exhausted') {
+              showAlert("일일 사용량이 초과되어 검색을 수행할 수 없습니다.\n데모 데이터를 표시합니다.");
+              setPosts(MOCK_POSTS);
+              setSearchQuery('데모 검색');
+              setViewMode('search');
+          } else {
+              showAlert("검색 중 오류 발생: " + e.message);
+          }
       } finally {
           setIsLoadingPosts(false);
       }
@@ -1120,7 +1255,13 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            <td className="text-center text-slate-500">{filteredPosts.length - (activePage - 1) * postsPerPage - idx}</td>
+                            <td className="text-center text-slate-500">
+                                {/* [중요] 전체 카운트 기반 번호 표시 (토탈 - 현재위치) */}
+                                {viewMode === 'search' 
+                                  ? (filteredPosts.length - (activePage - 1) * postsPerPage - idx) 
+                                  : (totalCount - (posts.indexOf(post))) // 전체 개수 - 전체 목록에서의 인덱스
+                                }
+                            </td>
                             <td className="py-2 px-3">
                                 <div className="flex items-center gap-1.5">
                                     {(viewMode === 'search' || activeBoardId === 'trash') && (
