@@ -445,8 +445,7 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash' || viewMode === 'search') { showAlert("이 목록에서는 이동 기능을 사용할 수 없습니다."); return; }
     if (selectedIds.length === 0) { showAlert("선택된 게시글이 없습니다."); return; }
     
-    // 이동은 UI에서만 처리하고 DB에는 순서 필드가 없으므로 ID만 스왑하는 로직 유지
-    // 단, 대량 데이터에서 이는 혼란을 줄 수 있으므로 주의 필요
+    // [수정] 이동 기능 개선 - 알림창 제거 및 즉시 UI 반영
     const currentList = [...filteredPosts];
     let itemsToSwap = [];
 
@@ -466,15 +465,35 @@ const InternalBoard = () => {
 
     if (itemsToSwap.length > 0) {
         const batch = writeBatch(db);
+        // 로컬 상태 업데이트를 위한 복사본
+        const newPosts = [...posts];
+
         itemsToSwap.forEach(([itemA, itemB]) => {
+            // DB 업데이트
             const refA = doc(db, "posts", itemA.docId);
             const refB = doc(db, "posts", itemB.docId);
             batch.update(refA, { id: itemB.id, isMoved: true });
             batch.update(refB, { id: itemA.id });
+
+            // 로컬 상태 업데이트 (ID 교환)
+            const indexA = newPosts.findIndex(p => p.docId === itemA.docId);
+            const indexB = newPosts.findIndex(p => p.docId === itemB.docId);
+            
+            if (indexA !== -1 && indexB !== -1) {
+                // ID 값 교환 (정렬 기준)
+                const tempId = newPosts[indexA].id;
+                newPosts[indexA] = { ...newPosts[indexA], id: newPosts[indexB].id, isMoved: true };
+                newPosts[indexB] = { ...newPosts[indexB], id: tempId };
+            }
         });
+
         await batch.commit();
-        // 전체 리로드 대신 알림
-        showAlert("순서가 변경되었습니다. (새로고침 시 반영됩니다)");
+        
+        // ID 기준으로 다시 정렬하여 화면 갱신
+        newPosts.sort((a, b) => b.id - a.id);
+        setPosts(newPosts);
+        
+        // 알림창 제거하고 조용히 완료
     }
   };
 
@@ -813,7 +832,30 @@ const InternalBoard = () => {
     printWindow.document.close();
   };
 
-  const handleGlobalSearch = () => { if(!searchInput.trim()) return; setSearchQuery(searchInput); setViewMode('search'); setSearchFilterBoardId('all'); setActivePage(1); };
+  // [수정] 검색 기능: 검색 시에는 모든 데이터를 불러와서 검색하도록 변경
+  const handleGlobalSearch = async () => { 
+      if(!searchInput.trim()) return; 
+      
+      // 검색 시에만 전체 데이터 로딩 (비용 발생하지만 검색 정확도 보장)
+      setIsLoadingPosts(true);
+      try {
+          const q = query(collection(db, "posts"), orderBy("id", "desc")); // limit 제거
+          const snapshot = await getDocs(q);
+          const allPosts = snapshot.docs.map(doc => ({...doc.data(), docId: doc.id}));
+          
+          setPosts(allPosts);
+          setHasMore(false); // 전체 로딩 완료
+          
+          setSearchQuery(searchInput); 
+          setViewMode('search'); 
+          setSearchFilterBoardId('all'); 
+          setActivePage(1);
+      } catch(e) {
+          showAlert("검색 중 오류 발생: " + e.message);
+      } finally {
+          setIsLoadingPosts(false);
+      }
+  };
   
   const getSearchResults = () => {
     if (!searchQuery) return [];
@@ -854,6 +896,8 @@ const InternalBoard = () => {
   const toggleCategory = (id) => setCategories(categories.map(c => c.id === id ? { ...c, isExpanded: !c.isExpanded } : c));
   const handleBackToList = () => { 
       if (viewMode === 'detail' && searchQuery) { setViewMode('search'); setSelectedPost(null); }
+      // 목록으로 돌아갈 때 다시 50개만 로드하여 메모리/비용 관리 (선택 사항)
+      // 여기서는 사용자 경험을 위해 그대로 둠
       else { setViewMode('list'); setSelectedPost(null); setSelectedIds([]); setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); }
   };
   const handleGoToWrite = () => { let content = ''; const ab = getActiveBoard(); if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); setViewMode('write'); };
@@ -986,7 +1030,7 @@ const InternalBoard = () => {
       <div className="flex-1 flex flex-col min-w-0 bg-slate-50">
         <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-6 shadow-sm z-10 gap-4">
           <div className="flex items-center gap-4"><button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden text-slate-500"><Menu size={20} /></button><h2 className="text-lg font-bold text-slate-800 hidden md:block">{viewMode === 'search' ? '통합 검색' : activeBoard.name}</h2></div>
-          <div className="flex-1 max-w-xl mx-auto relative group"><input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleGlobalSearch()} placeholder="제목 + 내용 검색 (현재 목록 내)" className="w-full pl-10 pr-4 py-2 bg-slate-100 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" /><Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <div className="flex-1 max-w-xl mx-auto relative group"><input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleGlobalSearch()} placeholder="제목 + 내용 검색 (전체 데이터 검색)" className="w-full pl-10 pr-4 py-2 bg-slate-100 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" /><Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             {searchInput && (<button onClick={() => setSearchInput('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={14} /></button>)}
           </div>
           <div className="flex items-center gap-2"><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 rounded-full"><Settings size={18} /></button></div>
@@ -1005,6 +1049,35 @@ const InternalBoard = () => {
                                 <span className="text-lg">'{searchQuery}' 검색 결과</span>
                                 <span className="text-sm bg-indigo-100 px-2 py-0.5 rounded-full text-indigo-600">{searchResults.length}건</span>
                             </div>
+                            {/* [복구] 게시판별 필터링 버튼 (검색 수 표시) */}
+                            {searchResults.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                    <button 
+                                        onClick={() => setSearchFilterBoardId('all')}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${searchFilterBoardId === 'all' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                    >
+                                        전체보기 ({searchResults.length}건)
+                                    </button>
+                                    {Object.entries(searchBoardStats).map(([boardId, count]) => {
+                                        let boardName = '기타';
+                                        let found = false;
+                                        for (const cat of categories) {
+                                            const b = cat.boards.find(b => b.id === parseInt(boardId));
+                                            if (b) { boardName = b.name; found = true; break; }
+                                        }
+                                        if (!found && boardId === 'bookmark') boardName = '북마크';
+                                        return (
+                                            <button 
+                                                key={boardId}
+                                                onClick={() => setSearchFilterBoardId(boardId)}
+                                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${String(searchFilterBoardId) === String(boardId) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                            >
+                                                {boardName} ({count}건)
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <>
