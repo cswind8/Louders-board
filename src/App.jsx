@@ -34,13 +34,9 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v32_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v34_'; 
 
-// ==================================================================================
-// [중요] 보조 함수들을 컴포넌트 외부로 이동 (초기화 오류 방지)
-// ==================================================================================
-
-// 텍스트 정규화 함수 (공백 제거)
+// 텍스트 정규화 함수 (공백 제거) - 중복 방지 위해 외부 선언
 const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
 
 // 파일 다운로드 헬퍼 함수
@@ -56,20 +52,16 @@ const downloadFile = (content, fileName, mimeType) => {
   URL.revokeObjectURL(url);
 };
 
-// 날짜/HTML 포맷터
+// 날짜/HTML 포맷터 (외부 선언)
 const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
-
 const formatDisplayDate = (full) => { if (!full) return ''; const [d, t] = full.split(' '); return d === getTodayString() ? t : d; };
-
 const stripHtml = (html) => { 
-    if (typeof document === 'undefined') return html || ""; // SSR 안전장치
+    if (typeof document === 'undefined') return html || ""; 
     const tmp = document.createElement("DIV"); 
     tmp.innerHTML = html; 
     return tmp.textContent || tmp.innerText || ""; 
 };
-
 const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
-
 const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
 
@@ -280,7 +272,6 @@ const InternalBoard = () => {
         const postsRef = collection(db, "posts");
         let q;
 
-        // [최적화] 인덱스 오류 방지: orderBy 없이 where만 사용 후 메모리 정렬
         if (activeBoardId === 'trash') {
              q = query(postsRef, where("isDeleted", "==", true));
         } else if (activeBoardId === 'bookmark') {
@@ -329,18 +320,20 @@ const InternalBoard = () => {
 
   const searchResults = getSearchResults();
   
+  // 게시판별 검색 결과 개수 통계
   const searchBoardStats = searchResults.reduce((acc, post) => {
     acc[post.boardId] = (acc[post.boardId] || 0) + 1;
     return acc;
   }, {});
 
+  // 현재 필터링된 검색 결과
   const getFilteredSearchResults = () => {
       if (searchFilterBoardId === 'all') return searchResults;
       return searchResults.filter(p => p.boardId === parseInt(searchFilterBoardId));
   };
   const currentSearchResults = getFilteredSearchResults();
 
-  // 목록 필터링 (검색 모드와 일반 모드 분리)
+  // 뷰 모드에 따른 최종 포스트 목록
   const filteredPosts = viewMode === 'search' ? currentSearchResults : posts;
   
   const indexOfLastPost = activePage * postsPerPage; 
@@ -351,6 +344,7 @@ const InternalBoard = () => {
   const startPage = (Math.ceil(activePage / pageGroupSize) - 1) * pageGroupSize + 1; 
   const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
 
+  // [수정] 카테고리 토글 (이전 코드에서 누락된 부분 복구)
   const toggleCategory = (id) => {
     setCategories(categories.map(c => c.id === id ? { ...c, isExpanded: !c.isExpanded } : c));
   };
@@ -407,7 +401,7 @@ const InternalBoard = () => {
 
   const handleGoToWrite = () => { 
     let content = ''; 
-    const ab = getActiveBoard(); 
+    const ab = categories.flatMap(c => c.boards).find(b => b.id === activeBoardId);
     if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); 
     setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); 
     setViewMode('write'); 
@@ -418,11 +412,15 @@ const InternalBoard = () => {
     const today = new Date();
     const dateString = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')} ${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
     
+    // 현재 활성화된 게시판 이름 찾기
+    const ab = categories.flatMap(c => c.boards).find(b => b.id === activeBoardId);
+    const categoryName = ab ? ab.name : '기타';
+
     const postData = {
         title: writeForm.title, content: writeForm.content, titleColor: writeForm.titleColor, 
         titleSize: writeForm.titleSize, attachments: writeForm.attachments, 
         boardId: Number(activeBoardId), 
-        category: activeBoard.name,
+        category: categoryName,
     };
 
     try {
@@ -452,7 +450,7 @@ const InternalBoard = () => {
         
         localStorage.removeItem('internalBoard_temp');
         setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] });
-    } catch (e) { console.error(e); showAlert("저장 실패: " + e.message); }
+    } catch (e) { console.error(e); showAlert("저장 실패: " + String(e.message)); }
   };
   
   const handleEditPost = () => { 
@@ -529,25 +527,20 @@ const InternalBoard = () => {
       setIsLoadingPosts(true);
       try {
           const postsRef = collection(db, "posts");
-          // 전체 데이터를 가져오기 위해 조건 없는 쿼리 사용
           const q = query(postsRef); 
           const snapshot = await getDocs(q);
           const allPosts = snapshot.docs.map(doc => ({...doc.data(), docId: doc.id}));
           
-          // 메모리에서 최신순 정렬
           allPosts.sort((a, b) => b.id - a.id);
           
-          // 상태 업데이트 (전체 데이터 로드)
           setPosts(allPosts);
           setHasMore(false); 
           
-          // 검색어 설정 및 모드 변경
           setSearchQuery(searchInput); 
           setViewMode('search'); 
           setSearchFilterBoardId('all'); 
           setActivePage(1);
           
-          // 검색 결과 확인 (UI 피드백용)
           const found = allPosts.filter(post => {
                 if (post.isDeleted) return false;
                 const textContent = (post.content || '').replace(/<[^>]*>/g, '').toLowerCase();
@@ -576,7 +569,6 @@ const InternalBoard = () => {
           setSelectedPost(null); 
           setSelectedIds([]); 
           setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); 
-          // 목록 복귀 시 데이터 갱신
           fetchInitialPosts(false);
       }
   };
@@ -653,8 +645,7 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash' || viewMode === 'search') { showAlert("이 목록에서는 이동 기능을 사용할 수 없습니다."); return; }
     if (selectedIds.length === 0) { showAlert("선택된 게시글이 없습니다."); return; }
     
-    // 현재 화면에 보이는 리스트 기준으로 이동
-    const currentList = [...filteredPosts];
+    const currentList = [...posts];
     let itemsToSwap = [];
 
     if (direction === 'up') {
@@ -691,8 +682,6 @@ const InternalBoard = () => {
             }
         });
         await batch.commit();
-        
-        // 재정렬
         newPosts.sort((a, b) => b.id - a.id);
         setPosts(newPosts);
         clearCache();
@@ -1260,7 +1249,19 @@ const InternalBoard = () => {
           {categories.map((cat) => (
             <div key={cat.id} className="mb-6">
               <button onClick={() => toggleCategory(cat.id)} className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-slate-400 hover:text-white uppercase tracking-wider mb-2"><span>{cat.name}</span>{cat.isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
-              {cat.isExpanded && <div className="space-y-1">{cat.boards.map(board => (<button key={board.id} onClick={() => { setActiveBoardId(board.id); setViewMode('list'); setSearchInput(''); setSearchQuery(''); setActivePage(1); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${activeBoardId === board.id && viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>{board.id === 'bookmark' ? <Star size={18} className="text-yellow-400" /> : board.type === 'notice' ? <Megaphone size={18} /> : <MessageSquare size={18} />}{board.name}</button>))}</div>}
+              {cat.isExpanded && <div className="space-y-1">{cat.boards.map(board => (<button key={board.id} onClick={() => { 
+                  // 1. 상태 초기화 (검색 잔상 제거)
+                  setPosts([]); 
+                  setSearchInput(''); 
+                  setSearchQuery(''); 
+                  setSearchFilterBoardId('all');
+                  setViewMode('list'); 
+                  setActivePage(1); 
+                  setIsMobileMenuOpen(false); 
+                  
+                  // 2. 게시판 변경 -> useEffect 트리거
+                  setActiveBoardId(board.id); 
+              }} className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${activeBoardId === board.id && viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>{board.id === 'bookmark' ? <Star size={18} className="text-yellow-400" /> : board.type === 'notice' ? <Megaphone size={18} /> : <MessageSquare size={18} />}{board.name}</button>))}</div>}
             </div>
           ))}
         </div>
@@ -1363,67 +1364,93 @@ const InternalBoard = () => {
             </div>
           )}
 
-          {/* [검색 결과 화면 - 게시판별 분리] */}
+          {/* [검색 결과 화면 - 버튼 필터링 및 리스트 갱신] */}
           {viewMode === 'search' && (
             <div className="space-y-6">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                        <Search className="w-6 h-6 text-indigo-600" />
-                        '{searchQuery}' 검색 결과 <span className="text-sm font-normal text-slate-500">총 {searchResults.length}건</span>
-                    </h2>
-                    <button onClick={handleBackToList} className="flex items-center gap-1 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 text-sm font-bold text-slate-600 transition-colors">
-                        <ArrowLeft size={16} /> 목록으로 돌아가기
-                    </button>
+                <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <Search className="w-6 h-6 text-indigo-600" />
+                            '{searchQuery}' 검색 결과
+                        </h2>
+                        <button onClick={handleBackToList} className="flex items-center gap-1 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 text-sm font-bold text-slate-600 transition-colors">
+                            <ArrowLeft size={16} /> 목록으로 돌아가기
+                        </button>
+                    </div>
+
+                    {/* [필터 버튼 영역] */}
+                    <div className="flex flex-wrap gap-2 pb-2 border-b border-slate-200">
+                        <button 
+                            onClick={() => setSearchFilterBoardId('all')}
+                            className={`px-4 py-2 rounded-full text-sm font-bold transition-all shadow-sm flex items-center gap-2 border ${searchFilterBoardId === 'all' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                            전체보기 <span className={`text-xs px-1.5 py-0.5 rounded-full ${searchFilterBoardId === 'all' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>{searchResults.length}</span>
+                        </button>
+                        
+                        {Object.entries(searchBoardStats).map(([boardId, count]) => {
+                            let boardName = '기타';
+                            const foundBoard = categories.flatMap(c => c.boards).find(b => b.id == boardId);
+                            if (foundBoard) boardName = foundBoard.name;
+                            if (boardId === 'bookmark') boardName = '북마크';
+                            
+                            return (
+                                <button 
+                                    key={boardId}
+                                    onClick={() => setSearchFilterBoardId(boardId)}
+                                    className={`px-4 py-2 rounded-full text-sm font-bold transition-all shadow-sm flex items-center gap-2 border ${String(searchFilterBoardId) === String(boardId) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                >
+                                    {boardName} <span className={`text-xs px-1.5 py-0.5 rounded-full ${String(searchFilterBoardId) === String(boardId) ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>{count}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
 
-                {categories.map(cat => (
-                    cat.boards.map(board => {
-                        // 해당 게시판의 검색 결과 필터링
-                        const boardPosts = searchResults.filter(p => p.boardId === board.id);
-                        if (boardPosts.length === 0) return null;
-
-                        return (
-                            <div key={board.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-2 h-8 bg-indigo-500 rounded-full"></div>
-                                        <h3 className="font-bold text-slate-800">{board.name}</h3>
-                                        <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-bold">{boardPosts.length}건</span>
-                                    </div>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[600px] table-fixed text-sm">
-                                        <colgroup><col className="w-16"/><col/><col className="w-24"/><col className="w-32"/><col className="w-20"/></colgroup>
-                                        <thead className="bg-white text-slate-500 border-b border-slate-100 text-xs uppercase">
-                                            <tr><th className="py-3 font-bold">번호</th><th className="font-bold text-left px-4">제목</th><th className="font-bold">작성자</th><th className="font-bold">등록일</th><th className="font-bold">조회</th></tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-50">
-                                            {boardPosts.map((post, idx) => (
-                                                <tr key={post.docId} onClick={() => handlePostClick(post)} className="hover:bg-indigo-50/50 cursor-pointer transition-colors">
-                                                    <td className="text-center py-3 text-slate-400">{idx + 1}</td>
-                                                    <td className="px-4 py-3">
-                                                        <div className="font-medium text-slate-800 line-clamp-1">{post.title}</div>
-                                                        <div className="text-xs text-slate-400 mt-0.5 line-clamp-1">{stripHtml(post.content).substring(0, 50)}...</div>
-                                                    </td>
-                                                    <td className="text-center text-slate-600">{post.author}</td>
-                                                    <td className="text-center text-slate-400 text-xs">{formatDisplayDate(post.date)}</td>
-                                                    <td className="text-center text-slate-400 text-xs">{post.views}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        );
-                    })
-                ))}
-                
-                {searchResults.length === 0 && (
-                    <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
-                        <Search className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                        <p className="text-slate-500 font-medium">검색 결과가 없습니다.</p>
+                {/* [결과 리스트 영역] */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-[800px] table-fixed text-sm">
+                            {/* [수정] py-3 -> py-2로 줄여서 시인성 확보 */}
+                            <colgroup><col className="w-16"/><col className="w-24"/><col/><col className="w-24"/><col className="w-32"/><col className="w-20"/></colgroup>
+                            <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-xs uppercase font-bold">
+                                <tr>
+                                    <th className="py-2">No.</th>
+                                    <th className="py-2">분류</th>
+                                    <th className="py-2 text-left px-4">제목</th>
+                                    <th className="py-2">작성자</th>
+                                    <th className="py-2">등록일</th>
+                                    <th className="py-2">조회</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {currentSearchResults.length > 0 ? currentSearchResults.map((post, idx) => (
+                                    <tr key={post.docId} onClick={() => handlePostClick(post)} className="hover:bg-indigo-50/60 cursor-pointer transition-colors">
+                                        <td className="text-center py-2 text-slate-400 text-xs">{idx + 1}</td>
+                                        <td className="text-center py-2">
+                                            <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold border border-slate-200">
+                                                {post.category}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2">
+                                            <div className="font-medium text-slate-800 line-clamp-1 text-sm">{post.title}</div>
+                                            <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{stripHtml(post.content).substring(0, 80)}...</div>
+                                        </td>
+                                        <td className="text-center text-slate-600 text-xs">{post.author}</td>
+                                        <td className="text-center text-slate-400 text-[10px]">{formatDisplayDate(post.date)}</td>
+                                        <td className="text-center text-slate-400 text-[10px]">{post.views}</td>
+                                    </tr>
+                                )) : (
+                                    <tr>
+                                        <td colSpan="6" className="py-12 text-center text-slate-400">
+                                            <Search className="w-10 h-10 mx-auto mb-2 text-slate-200" />
+                                            선택하신 분류에 해당하는 검색 결과가 없습니다.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
                     </div>
-                )}
+                </div>
             </div>
           )}
 
@@ -1663,7 +1690,7 @@ const InternalBoard = () => {
                       ) : (
                         <>
                           <button onClick={handleEditPost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition-colors"><Edit size={16} /> 수정</button>
-                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 삭제</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={14} /> 삭제</button>
                         </>
                       )}
                 </div>
