@@ -33,8 +33,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// 캐시 키 상수 (버전 업)
-const CACHE_KEY_PREFIX = 'board_cache_v11_';
+// 캐시 키 상수
+const CACHE_KEY_PREFIX = 'board_cache_v13_';
+
+// 텍스트 정규화 함수 (공백 제거) - 컴포넌트 외부로 이동하여 중복 방지
+const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
 
 // 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
@@ -67,13 +70,10 @@ const InternalBoard = () => {
   const [loginPw, setLoginPw] = useState('');
   const apiKey = ""; 
 
-  // 게시글 데이터
   const [posts, setPosts] = useState([]);
   const [lastVisible, setLastVisible] = useState(null); 
   const [hasMore, setHasMore] = useState(true); 
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
-  
-  // [중요] 게시판별 독립적인 총 개수 (예: 공장출고 1600, 민수매출 800)
   const [boardTotalCount, setBoardTotalCount] = useState(0); 
   
   const [selectedPost, setSelectedPost] = useState(null);
@@ -84,7 +84,7 @@ const InternalBoard = () => {
 
   const [isXlsxLoaded, setIsXlsxLoaded] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  
+
   const [categories, setCategories] = useState([
     {
       id: 'cat_my',
@@ -208,10 +208,34 @@ const InternalBoard = () => {
     });
   };
 
-  // [기능 1] 데이터 및 카운트 불러오기 (비용 최적화 & 정확한 번호 계산)
+  const fetchBoardCount = async () => {
+    if (!currentUser) return;
+    
+    let q;
+    const postsRef = collection(db, "posts");
+    
+    if (activeBoardId === 'trash') {
+        q = query(postsRef, where("isDeleted", "==", true));
+    } else if (activeBoardId === 'bookmark') {
+        q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
+    } else {
+        q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
+    }
+
+    try {
+        const snapshot = await getCountFromServer(q);
+        setBoardTotalCount(snapshot.data().count);
+    } catch (e) {
+        console.error("Count fetch error:", e);
+        setBoardTotalCount(0);
+    }
+  };
+
   const fetchInitialPosts = async (forceRefresh = false) => {
     if (!currentUser) { setPosts([]); return; }
     
+    fetchBoardCount();
+
     const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
 
     if (!forceRefresh) {
@@ -233,24 +257,20 @@ const InternalBoard = () => {
     setIsLoadingPosts(true);
     try {
         const postsRef = collection(db, "posts");
-        
-        // 1. 현재 게시판의 총 개수 가져오기 (정확한 1~1600 번호를 위해 필수)
-        let countQ;
-        if (activeBoardId === 'trash') {
-            countQ = query(postsRef, where("isDeleted", "==", true));
-        } else if (activeBoardId === 'bookmark') {
-            countQ = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
-        } else {
-             // boardId가 숫자/문자 섞여있어도 안전하게 처리하기 위해 조건 완화
-            countQ = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
-        }
-        
-        const snapshotCount = await getCountFromServer(countQ);
-        const currentTotal = snapshotCount.data().count;
-        setBoardTotalCount(currentTotal);
+        let q;
 
-        // 2. 게시글 목록 가져오기 (최신 200개, 인덱스 에러 방지용으로 전체 정렬)
-        const q = query(postsRef, orderBy("id", "desc"), limit(200)); 
+        if (activeBoardId === 'trash') {
+             q = query(postsRef, where("isDeleted", "==", true), limit(100));
+        } else if (activeBoardId === 'bookmark') {
+             q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false), limit(100));
+        } else {
+             q = query(
+                 postsRef, 
+                 where("boardId", "==", Number(activeBoardId)), 
+                 where("isDeleted", "==", false),
+                 limit(100) 
+             );
+        }
         
         const documentSnapshots = await getDocs(q);
         const rawDocs = documentSnapshots.docs;
@@ -259,18 +279,16 @@ const InternalBoard = () => {
             setLastVisible(rawDocs[rawDocs.length - 1]);
         }
 
-        // 3. 메모리 필터링 (화면에 보여줄 것만 남기기)
         const loadedPosts = rawDocs.map(doc => ({ ...doc.data(), docId: doc.id }));
-        const filteredPosts = filterPostsInMemory(loadedPosts);
+        loadedPosts.sort((a, b) => b.id - a.id);
         
-        setPosts(filteredPosts);
-        setHasMore(rawDocs.length === 200);
+        setPosts(loadedPosts);
+        setHasMore(rawDocs.length === 100);
         
-        // 캐시 저장
         sessionStorage.setItem(cacheKey, JSON.stringify({
-            posts: filteredPosts,
+            posts: loadedPosts,
             timestamp: Date.now(),
-            count: currentTotal // 해당 게시판의 정확한 개수 저장
+            count: boardTotalCount 
         }));
         
     } catch (error) {
@@ -281,30 +299,27 @@ const InternalBoard = () => {
     }
   };
 
-  const filterPostsInMemory = (postsToFilter) => {
-      return postsToFilter.filter(p => {
-          if (activeBoardId === 'trash') return p.isDeleted === true;
-          if (activeBoardId === 'bookmark') return p.isBookmarked === true && p.isDeleted === false;
-          
-          if (activeBoardId) {
-             // == 연산자로 숫자/문자열 자동 형변환 비교 (안전장치)
-             return p.boardId == activeBoardId && p.isDeleted === false;
-          }
-          return p.isDeleted === false;
-      });
-  };
-
   const fetchMorePosts = async () => {
     if (!lastVisible) return;
     
     setIsLoadingPosts(true);
     try {
-        const q = query(
-            collection(db, "posts"), 
-            orderBy("id", "desc"),
-            startAfter(lastVisible), 
-            limit(200) 
-        );
+        const postsRef = collection(db, "posts");
+        let q;
+
+        if (activeBoardId === 'trash') {
+             q = query(postsRef, where("isDeleted", "==", true), startAfter(lastVisible), limit(100));
+        } else if (activeBoardId === 'bookmark') {
+             q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false), startAfter(lastVisible), limit(100));
+        } else {
+             q = query(
+                 postsRef, 
+                 where("boardId", "==", Number(activeBoardId)), 
+                 where("isDeleted", "==", false),
+                 startAfter(lastVisible),
+                 limit(100)
+             );
+        }
         
         const documentSnapshots = await getDocs(q);
         const rawDocs = documentSnapshots.docs;
@@ -313,11 +328,13 @@ const InternalBoard = () => {
             setLastVisible(rawDocs[rawDocs.length - 1]);
             
             const newPosts = rawDocs.map(doc => ({ ...doc.data(), docId: doc.id }));
-            const filteredNewPosts = filterPostsInMemory(newPosts);
+            newPosts.sort((a, b) => b.id - a.id);
             
-            const updatedPosts = [...posts, ...filteredNewPosts];
+            const updatedPosts = [...posts, ...newPosts];
+            updatedPosts.sort((a, b) => b.id - a.id);
+
             setPosts(updatedPosts);
-            setHasMore(rawDocs.length === 200);
+            setHasMore(rawDocs.length === 100);
 
             const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
             sessionStorage.setItem(cacheKey, JSON.stringify({
@@ -336,7 +353,7 @@ const InternalBoard = () => {
   };
 
   useEffect(() => {
-    fetchInitialPosts(false); 
+    fetchInitialPosts(false);
   }, [currentUser, activeBoardId]);
   
   const handleRefresh = () => {
@@ -362,7 +379,6 @@ const InternalBoard = () => {
   const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
   const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
-  // ... (로그인 등 기존 로직) ...
   const handleLogin = (e) => { 
     e.preventDefault(); 
     const id = loginId.trim();
@@ -396,7 +412,7 @@ const InternalBoard = () => {
     const postData = {
         title: writeForm.title, content: writeForm.content, titleColor: writeForm.titleColor, 
         titleSize: writeForm.titleSize, attachments: writeForm.attachments, 
-        boardId: Number(activeBoardId), // 숫자 강제 변환
+        boardId: Number(activeBoardId), 
         category: activeBoard.name,
     };
 
@@ -405,8 +421,6 @@ const InternalBoard = () => {
 
         if (writeForm.docId) {
             await updateDoc(doc(db, "posts", writeForm.docId), postData);
-            
-            // 로컬 즉시 반영
             setPosts(posts.map(p => p.docId === writeForm.docId ? { ...p, ...postData } : p));
             if (selectedPost && selectedPost.docId === writeForm.docId) {
                 setSelectedPost({ ...selectedPost, ...postData });
@@ -594,7 +608,6 @@ const InternalBoard = () => {
   };
 
 
-  // --- 관리자 기능 ---
   const handleAddCategory = () => {
     if (!newCategoryName.trim()) return;
     const newCat = { id: `cat_${Date.now()}`, name: newCategoryName, isExpanded: true, boards: [] };
@@ -671,15 +684,11 @@ const InternalBoard = () => {
     });
   };
 
-  const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
-
-  // --- 대용량 일괄 저장 로직 (업로드) ---
   const saveImportedDataToDB = async (importedPosts) => {
     setIsProcessing(true); 
     try {
         clearCache(); 
 
-        // 1. 기존 데이터 전체 삭제 (중복 방지)
         const postsRef = collection(db, "posts");
         const snapshot = await getDocs(postsRef); 
         
@@ -701,7 +710,6 @@ const InternalBoard = () => {
             }
         }
 
-        // 2. 새 데이터 추가
         const addChunkSize = 400;
         const addBatches = [];
         
@@ -743,7 +751,6 @@ const InternalBoard = () => {
     }
   };
 
-  // [수정] 엑셀 내보내기 (분류별 시트 & 번호 분리)
   const handleExportExcel = async () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
@@ -755,9 +762,7 @@ const InternalBoard = () => {
         const allPosts = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
         const activePosts = allPosts.filter(p => !p.isDeleted);
         
-        // 1. 분류별 그룹화
         const groupedData = {};
-        // 데이터를 분류별로 모으기 (아직 번호 매기지 않음)
         activePosts.forEach((post) => {
             const category = post.category || '기타';
             if (!groupedData[category]) groupedData[category] = [];
@@ -770,10 +775,9 @@ const InternalBoard = () => {
             const ws = XLSX_LIB.utils.json_to_sheet([]);
             XLSX_LIB.utils.book_append_sheet(wb, ws, "데이터없음");
         } else {
-            // 2. 각 분류별로 순회하며 번호 새로 매겨서 시트 생성
             Object.keys(groupedData).forEach(category => {
                 const postsInCategory = groupedData[category];
-                // 해당 카테고리 내에서 번호 재계산 (총 개수 - 인덱스)
+                // 번호 재할당 (시트 내에서 내림차순)
                 const sheetData = postsInCategory.map((post, idx) => ({
                     '번호': postsInCategory.length - idx, 
                     '분류': post.category, 
@@ -782,7 +786,7 @@ const InternalBoard = () => {
                     '등록일': post.date, 
                     '조회수': post.views, 
                     '내용': htmlToTextWithLineBreaks(post.content),
-                    'SystemID': post.id // 내부 ID는 유지
+                    'SystemID': post.id
                 }));
 
                 const safeSheetName = category.replace(/[\\/?*[\]]/g, "").substring(0, 30) || "Sheet";
@@ -805,7 +809,6 @@ const InternalBoard = () => {
       excelInputRef.current?.click(); 
   };
   
-  // 엑셀 불러오기
   const handleImportExcelChange = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     const XLSX_LIB = getXLSX();
@@ -817,7 +820,6 @@ const InternalBoard = () => {
         const data = new Uint8Array(event.target.result);
         const workbook = XLSX_LIB.read(data, { type: 'array' });
         
-        // 모든 시트 순회
         let jsonData = [];
         workbook.SheetNames.forEach(sheetName => {
             const sheetData = XLSX_LIB.utils.sheet_to_json(workbook.Sheets[sheetName]);
@@ -1550,7 +1552,7 @@ const InternalBoard = () => {
                       ) : (
                         <>
                           <button onClick={handleEditPost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition-colors"><Edit size={16} /> 수정</button>
-                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 삭제</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={14} /> 삭제</button>
                         </>
                       )}
                 </div>
