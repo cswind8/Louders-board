@@ -34,7 +34,11 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v26_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v32_'; 
+
+// ==================================================================================
+// [중요] 보조 함수들을 컴포넌트 외부로 이동 (초기화 오류 방지)
+// ==================================================================================
 
 // 텍스트 정규화 함수 (공백 제거)
 const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
@@ -51,6 +55,23 @@ const downloadFile = (content, fileName, mimeType) => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
+
+// 날짜/HTML 포맷터
+const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
+
+const formatDisplayDate = (full) => { if (!full) return ''; const [d, t] = full.split(' '); return d === getTodayString() ? t : d; };
+
+const stripHtml = (html) => { 
+    if (typeof document === 'undefined') return html || ""; // SSR 안전장치
+    const tmp = document.createElement("DIV"); 
+    tmp.innerHTML = html; 
+    return tmp.textContent || tmp.innerText || ""; 
+};
+
+const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
+
+const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
+
 
 const InternalBoard = () => {
   // ==================================================================================
@@ -70,7 +91,6 @@ const InternalBoard = () => {
   const [loginPw, setLoginPw] = useState('');
   const apiKey = ""; 
 
-  // [수정] 누락되었던 boardTotalCount 복구
   const [posts, setPosts] = useState([]);
   const [lastVisible, setLastVisible] = useState(null); 
   const [hasMore, setHasMore] = useState(true); 
@@ -209,7 +229,6 @@ const InternalBoard = () => {
     });
   };
 
-  // [기능] 게시판별 총 개수 가져오기
   const fetchBoardCount = async () => {
     if (!currentUser) return;
     
@@ -233,7 +252,6 @@ const InternalBoard = () => {
     }
   };
 
-  // [기능] 데이터 불러오기
   const fetchInitialPosts = async (forceRefresh = false) => {
     if (!currentUser) { setPosts([]); return; }
     
@@ -250,7 +268,7 @@ const InternalBoard = () => {
                     setPosts(posts);
                     setBoardTotalCount(count); 
                     setLastVisible(null);
-                    setHasMore(false);
+                    setHasMore(false); 
                     return; 
                 }
             } catch (e) { console.error("Cache parsing error", e); }
@@ -262,7 +280,7 @@ const InternalBoard = () => {
         const postsRef = collection(db, "posts");
         let q;
 
-        // 인덱스 오류 없이 최신순 보장을 위해 전체 로드 후 메모리 정렬
+        // [최적화] 인덱스 오류 방지: orderBy 없이 where만 사용 후 메모리 정렬
         if (activeBoardId === 'trash') {
              q = query(postsRef, where("isDeleted", "==", true));
         } else if (activeBoardId === 'bookmark') {
@@ -292,10 +310,53 @@ const InternalBoard = () => {
         
     } catch (error) {
         console.error("Error fetching posts:", error);
-        showAlert("데이터 로딩 실패: " + String(error.message));
+        showAlert("데이터 로딩 실패: " + error.message);
     } finally {
         setIsLoadingPosts(false);
     }
+  };
+
+  // 검색 결과 계산 (메모리 내)
+  const getSearchResults = () => {
+    if (!searchQuery) return [];
+    const query = searchQuery.toLowerCase();
+    return posts.filter(post => {
+        if (post.isDeleted) return false;
+        const textContent = stripHtml(post.content).toLowerCase();
+        return post.title.toLowerCase().includes(query) || textContent.includes(query);
+    });
+  };
+
+  const searchResults = getSearchResults();
+  
+  const searchBoardStats = searchResults.reduce((acc, post) => {
+    acc[post.boardId] = (acc[post.boardId] || 0) + 1;
+    return acc;
+  }, {});
+
+  const getFilteredSearchResults = () => {
+      if (searchFilterBoardId === 'all') return searchResults;
+      return searchResults.filter(p => p.boardId === parseInt(searchFilterBoardId));
+  };
+  const currentSearchResults = getFilteredSearchResults();
+
+  // 목록 필터링 (검색 모드와 일반 모드 분리)
+  const filteredPosts = viewMode === 'search' ? currentSearchResults : posts;
+  
+  const indexOfLastPost = activePage * postsPerPage; 
+  const indexOfFirstPost = indexOfLastPost - postsPerPage; 
+  const currentPosts = filteredPosts.slice(indexOfFirstPost, indexOfLastPost); 
+  const totalPages = Math.ceil(filteredPosts.length / postsPerPage);
+  const pageGroupSize = 10; 
+  const startPage = (Math.ceil(activePage / pageGroupSize) - 1) * pageGroupSize + 1; 
+  const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
+
+  const toggleCategory = (id) => {
+    setCategories(categories.map(c => c.id === id ? { ...c, isExpanded: !c.isExpanded } : c));
+  };
+
+  const fetchMorePosts = async () => {
+    return;
   };
 
   useEffect(() => {
@@ -318,56 +379,6 @@ const InternalBoard = () => {
     return categories[1]?.boards[0] || { id: 0, name: '게시판 없음' };
   };
   const activeBoard = getActiveBoard();
-
-  // [복구] 검색 기능 - 중요: 반드시 정의되어야 함
-  const handleGlobalSearch = () => { 
-      if(!searchInput.trim()) {
-          showAlert("검색어를 입력해주세요.");
-          return;
-      }
-      setSearchQuery(searchInput);
-      setViewMode('search');
-      setActivePage(1);
-  };
-  
-  // 검색 결과 계산 (메모리 내)
-  const getSearchResults = () => {
-    if (!searchQuery) return [];
-    const query = searchQuery.toLowerCase();
-    return posts.filter(post => {
-        if (post.isDeleted) return false;
-        const textContent = (post.content || '').replace(/<[^>]*>/g, '').toLowerCase();
-        return post.title.toLowerCase().includes(query) || textContent.includes(query);
-    });
-  };
-
-  const searchResults = getSearchResults();
-  
-  const searchBoardStats = searchResults.reduce((acc, post) => {
-    acc[post.boardId] = (acc[post.boardId] || 0) + 1;
-    return acc;
-  }, {});
-
-  // 필터링된 포스트 계산
-  const filteredPosts = viewMode === 'search' 
-    ? (searchFilterBoardId === 'all' 
-        ? searchResults
-        : searchResults.filter(p => p.boardId === parseInt(searchFilterBoardId)))
-    : posts;
-  
-  const indexOfLastPost = activePage * postsPerPage; 
-  const indexOfFirstPost = indexOfLastPost - postsPerPage; 
-  const currentPosts = filteredPosts.slice(indexOfFirstPost, indexOfLastPost); 
-  const totalPages = Math.ceil(filteredPosts.length / postsPerPage);
-  const pageGroupSize = 10; 
-  const startPage = (Math.ceil(activePage / pageGroupSize) - 1) * pageGroupSize + 1; 
-  const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
-
-  const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
-  const formatDisplayDate = (full) => { if (!full) return ''; const [d, t] = full.split(' '); return d === getTodayString() ? t : d; };
-  const stripHtml = (html) => { const tmp = document.createElement("DIV"); tmp.innerHTML = html; return tmp.textContent || tmp.innerText || ""; };
-  const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
-  const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
   const handleLogin = (e) => { 
     e.preventDefault(); 
@@ -441,7 +452,7 @@ const InternalBoard = () => {
         
         localStorage.removeItem('internalBoard_temp');
         setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] });
-    } catch (e) { console.error(e); showAlert("저장 실패: " + String(e.message)); }
+    } catch (e) { console.error(e); showAlert("저장 실패: " + e.message); }
   };
   
   const handleEditPost = () => { 
@@ -475,6 +486,83 @@ const InternalBoard = () => {
         setWriteForm(p => ({...p, content: cleaned}));
         if(contentRef.current) contentRef.current.innerHTML = cleaned;
     }
+  };
+
+  const handleToolbarAction = (act, val, e) => { 
+      if (e) e.preventDefault(); 
+      if (act === 'customFontSize') { applyFontSize(val); setShowFontSizePicker(false); }
+      else if (act === 'formatBlock') applyFormatBlock(val);
+      else document.execCommand(act, false, val); 
+      if(contentRef.current) setWriteForm(p => ({...p, content: contentRef.current.innerHTML})); 
+  };
+  
+  const applyFormatBlock = (tag) => document.execCommand('formatBlock', false, tag);
+  const applyFontSize = (size) => {
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      if (range.collapsed) return;
+      const span = document.createElement("span");
+      span.style.fontSize = size;
+      try {
+        const content = range.extractContents();
+        span.appendChild(content);
+        range.insertNode(span);
+      } catch (e) { console.error(e); }
+    }
+  };
+  
+  const titleColors = [{ name: 'Red', class: 'text-rose-600', bg: 'bg-rose-600' }, { name: 'Black', class: 'text-slate-900', bg: 'bg-slate-900' }, { name: 'Blue', class: 'text-indigo-600', bg: 'bg-indigo-600' }, { name: 'Green', class: 'text-emerald-600', bg: 'bg-emerald-600' }, { name: 'Amber', class: 'text-amber-600', bg: 'bg-amber-600' }, { name: 'Purple', class: 'text-purple-600', bg: 'bg-purple-600' }];
+  
+  const showAlert = (message) => setModalConfig({ isOpen: true, type: 'alert', message: String(message), onConfirm: null });
+  const showConfirm = (message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', message: String(message), onConfirm });
+  const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
+  const handleConfirmAction = () => { if (modalConfig.onConfirm) modalConfig.onConfirm(); closeModal(); };
+
+  // [복구] 전체 검색 (게시판 구분 없이)
+  const handleGlobalSearch = async () => { 
+      if(!searchInput.trim()) {
+          showAlert("검색어를 입력해주세요.");
+          return;
+      }
+      
+      setIsLoadingPosts(true);
+      try {
+          const postsRef = collection(db, "posts");
+          // 전체 데이터를 가져오기 위해 조건 없는 쿼리 사용
+          const q = query(postsRef); 
+          const snapshot = await getDocs(q);
+          const allPosts = snapshot.docs.map(doc => ({...doc.data(), docId: doc.id}));
+          
+          // 메모리에서 최신순 정렬
+          allPosts.sort((a, b) => b.id - a.id);
+          
+          // 상태 업데이트 (전체 데이터 로드)
+          setPosts(allPosts);
+          setHasMore(false); 
+          
+          // 검색어 설정 및 모드 변경
+          setSearchQuery(searchInput); 
+          setViewMode('search'); 
+          setSearchFilterBoardId('all'); 
+          setActivePage(1);
+          
+          // 검색 결과 확인 (UI 피드백용)
+          const found = allPosts.filter(post => {
+                if (post.isDeleted) return false;
+                const textContent = (post.content || '').replace(/<[^>]*>/g, '').toLowerCase();
+                return post.title.toLowerCase().includes(searchInput.toLowerCase()) || textContent.includes(searchInput.toLowerCase());
+          });
+
+          if (found.length === 0) {
+             showAlert("조건에 맞는 검색 결과가 없습니다.");
+          }
+
+      } catch(e) {
+          showAlert("검색 중 오류 발생: " + e.message);
+      } finally {
+          setIsLoadingPosts(false);
+      }
   };
 
   const handleBackToList = () => { 
@@ -565,7 +653,8 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash' || viewMode === 'search') { showAlert("이 목록에서는 이동 기능을 사용할 수 없습니다."); return; }
     if (selectedIds.length === 0) { showAlert("선택된 게시글이 없습니다."); return; }
     
-    const currentList = [...posts];
+    // 현재 화면에 보이는 리스트 기준으로 이동
+    const currentList = [...filteredPosts];
     let itemsToSwap = [];
 
     if (direction === 'up') {
@@ -602,6 +691,8 @@ const InternalBoard = () => {
             }
         });
         await batch.commit();
+        
+        // 재정렬
         newPosts.sort((a, b) => b.id - a.id);
         setPosts(newPosts);
         clearCache();
@@ -809,7 +900,7 @@ const InternalBoard = () => {
     } catch (e) {
         setIsProcessing(false); 
         console.error(e);
-        showAlert("데이터 처리 중 오류가 발생했습니다: " + String(e.message));
+        showAlert("데이터 처리 중 오류가 발생했습니다: " + e.message);
     }
   };
 
@@ -916,7 +1007,7 @@ const InternalBoard = () => {
         XLSX_LIB.writeFile(wb, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.xlsx`);
     } catch (e) {
         console.error(e);
-        showAlert("백업 중 오류가 발생했습니다: " + String(e.message));
+        showAlert("백업 중 오류가 발생했습니다: " + e.message);
     } finally {
         setIsProcessing(false);
     }
@@ -997,7 +1088,7 @@ const InternalBoard = () => {
              saveImportedDataToDB(parsedPosts);
         });
 
-      } catch (error) { showAlert("엑셀 처리 오류: " + String(error.message)); }
+      } catch (error) { showAlert("엑셀 처리 오류: " + error.message); }
     };
     reader.readAsArrayBuffer(file); e.target.value = '';
   };
@@ -1028,7 +1119,7 @@ const InternalBoard = () => {
             } else {
                 showAlert("올바른 JSON 파일 형식이 아닙니다 (배열 아님).");
             }
-        } catch (error) { showAlert("파일 오류: " + String(error.message)); } 
+        } catch (error) { showAlert("파일 오류: " + error.message); } 
     };
     reader.readAsText(file); e.target.value = ''; 
   };
@@ -1062,7 +1153,7 @@ const InternalBoard = () => {
         downloadFile(jsonContent, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.json`, 'application/json'); 
     } catch (e) {
         console.error(e);
-        showAlert("백업 중 오류가 발생했습니다: " + String(e.message));
+        showAlert("백업 중 오류가 발생했습니다: " + e.message);
     } finally {
         setIsProcessing(false);
     }
@@ -1116,21 +1207,6 @@ const InternalBoard = () => {
     printWindow.document.write(htmlContent);
     printWindow.document.close();
   };
-
-  const handleToolbarAction = (act, val, e) => { 
-      e?.preventDefault(); 
-      if (act === 'customFontSize') { applyFontSize(val); setShowFontSizePicker(false); }
-      else if (act === 'formatBlock') applyFormatBlock(val);
-      else document.execCommand(act, false, val); 
-      if(contentRef.current) setWriteForm(p => ({...p, content: contentRef.current.innerHTML})); 
-  };
-  
-  const titleColors = [{ name: 'Red', class: 'text-rose-600', bg: 'bg-rose-600' }, { name: 'Black', class: 'text-slate-900', bg: 'bg-slate-900' }, { name: 'Blue', class: 'text-indigo-600', bg: 'bg-indigo-600' }, { name: 'Green', class: 'text-emerald-600', bg: 'bg-emerald-600' }, { name: 'Amber', class: 'text-amber-600', bg: 'bg-amber-600' }, { name: 'Purple', class: 'text-purple-600', bg: 'bg-purple-600' }];
-  
-  const showAlert = (message) => setModalConfig({ isOpen: true, type: 'alert', message: String(message), onConfirm: null });
-  const showConfirm = (message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', message: String(message), onConfirm });
-  const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
-  const handleConfirmAction = () => { if (modalConfig.onConfirm) modalConfig.onConfirm(); closeModal(); };
 
   if (viewMode === 'login') {
     return (
@@ -1208,58 +1284,16 @@ const InternalBoard = () => {
         </header>
 
         <main className="flex-1 overflow-y-auto p-3 md:p-6" id="main-content">
-          {(viewMode === 'list' || viewMode === 'search') && (
+          {viewMode === 'list' && (
             <div className={`max-w-7xl mx-auto bg-white rounded-xl shadow-sm border overflow-hidden ${activeBoardId === 'trash' ? 'border-rose-200' : 'border-slate-200'}`}>
               <div className={`p-3 border-b flex flex-col gap-3 ${activeBoardId === 'trash' ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-100'}`}>
                 <div className="flex flex-col xl:flex-row justify-between items-center gap-3">
                   <div className="flex items-center gap-2 w-full xl:w-auto">
-                    {viewMode === 'search' ? (
-                        <div className="flex flex-col gap-1 w-full">
-                            <div className="flex items-center gap-2 text-indigo-700 font-bold">
-                                <Search className="w-5 h-5" />
-                                <span className="text-lg">'{searchQuery}' 검색 결과</span>
-                                <span className="text-sm bg-indigo-100 px-2 py-0.5 rounded-full text-indigo-600">{searchResults.length}건</span>
-                            </div>
-                            {/* [복구] 게시판별 필터링 버튼 (검색 수 표시) */}
-                            {searchResults.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                    <button 
-                                        onClick={() => setSearchFilterBoardId('all')}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${searchFilterBoardId === 'all' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-                                    >
-                                        전체보기 ({searchResults.length}건)
-                                    </button>
-                                    {Object.entries(searchBoardStats).map(([boardId, count]) => {
-                                        let boardName = '기타';
-                                        let found = false;
-                                        for (const cat of categories) {
-                                            const b = cat.boards.find(b => b.id === parseInt(boardId));
-                                            if (b) { boardName = b.name; found = true; break; }
-                                        }
-                                        if (!found && boardId === 'bookmark') boardName = '북마크';
-                                        return (
-                                            <button 
-                                                key={boardId}
-                                                onClick={() => setSearchFilterBoardId(boardId)}
-                                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${String(searchFilterBoardId) === String(boardId) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-                                            >
-                                                {boardName} ({count}건)
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                        <div className={`p-1.5 rounded-lg ${activeBoardId === 'trash' ? 'bg-rose-100' : 'bg-indigo-50'}`}>
+                            {activeBoardId === 'trash' ? <Trash2 className="w-4 h-4 text-rose-600" /> : activeBoardId === 'bookmark' ? <Star className="w-4 h-4 text-yellow-600" /> : <FileText className="w-4 h-4 text-indigo-600" />}
                         </div>
-                    ) : (
-                        <>
-                            <div className={`p-1.5 rounded-lg ${activeBoardId === 'trash' ? 'bg-rose-100' : 'bg-indigo-50'}`}>
-                                {activeBoardId === 'trash' ? <Trash2 className="w-4 h-4 text-rose-600" /> : activeBoardId === 'bookmark' ? <Star className="w-4 h-4 text-yellow-600" /> : <FileText className="w-4 h-4 text-indigo-600" />}
-                            </div>
-                            <h1 className={`text-lg font-bold ${activeBoardId === 'trash' ? 'text-rose-900' : 'text-slate-900'} whitespace-nowrap`}>{activeBoard.name}</h1>
-                            {/* [추가] 새로고침 버튼 (수동 갱신) */}
-                            <button onClick={handleRefresh} className="ml-2 p-1.5 text-slate-400 hover:text-indigo-600 rounded-full hover:bg-slate-100 transition-colors" title="목록 새로고침"><RotateCcw size={14} /></button>
-                        </>
-                    )}
+                        <h1 className={`text-lg font-bold ${activeBoardId === 'trash' ? 'text-rose-900' : 'text-slate-900'} whitespace-nowrap`}>{activeBoard.name}</h1>
+                        <button onClick={handleRefresh} className="ml-2 p-1.5 text-slate-400 hover:text-indigo-600 rounded-full hover:bg-slate-100 transition-colors" title="목록 새로고침"><RotateCcw size={14} /></button>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -1268,9 +1302,7 @@ const InternalBoard = () => {
                         <button onClick={handleRestoreSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><RefreshCcw className="w-3.5 h-3.5" /> 복구</button>
                         <button onClick={handleDeleteSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><Trash2 className="w-3.5 h-3.5" /> 영구삭제</button>
                      </> 
-                     : viewMode === 'search' ? (
-                        <button onClick={() => setViewMode('list')} className="flex items-center gap-1 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><ArrowLeft className="w-3.5 h-3.5" /> 목록으로 돌아가기</button>
-                     ) : (
+                     : (
                      <>
                         <button onClick={() => handleMoveContent('up')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md" title="위로"><ArrowUp size={16} /></button>
                         <button onClick={() => handleMoveContent('down')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md" title="아래로"><ArrowDown size={16} /></button>
@@ -1291,17 +1323,12 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            {/* [수정] 번호 계산 로직: 현재 게시판의 총 개수(boardTotalCount)를 기준으로 계산 */}
+                            {/* 게시판별 번호 계산 */}
                             <td className="text-center text-slate-500">
-                                {viewMode === 'search' 
-                                    ? searchResults.length - (activePage - 1) * postsPerPage - idx
-                                    : (boardTotalCount || filteredPosts.length) - (activePage - 1) * postsPerPage - idx}
+                                {(boardTotalCount || posts.length) - (activePage - 1) * postsPerPage - idx}
                             </td>
                             <td className="py-2 px-3">
                                 <div className="flex items-center gap-1.5">
-                                    {(viewMode === 'search' || activeBoardId === 'trash') && (
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">{post.category}</span>
-                                    )}
                                     {post.type === 'notice' && <span className="bg-rose-100 text-rose-600 text-[10px] px-1 rounded font-bold">공지</span>}
                                     <span className={`font-medium line-clamp-1 ${post.titleColor}`}>{post.title}</span>
                                     {post.isBookmarked && <Star size={12} className="text-yellow-500 fill-yellow-500" />}
@@ -1321,7 +1348,7 @@ const InternalBoard = () => {
 
               {/* 페이지네이션 */}
               <div className="p-3 border-t border-slate-200 bg-white flex justify-between items-center">
-                 <div className="flex-1"></div> {/* 좌측 여백 */}
+                 <div className="flex-1"></div> 
                  <div className="flex justify-center items-center gap-1">
                     <button onClick={() => setActivePage(1)} disabled={activePage === 1} className="p-1 border rounded disabled:opacity-30"><ChevronsLeft size={14} /></button>
                     <button onClick={() => setActivePage(Math.max(1, startPage - 1))} disabled={startPage === 1} className="p-1 border rounded disabled:opacity-30"><ChevronLeft size={14} /></button>
@@ -1331,11 +1358,72 @@ const InternalBoard = () => {
                     <button onClick={() => setActivePage(Math.min(totalPages, endPage + 1))} disabled={endPage >= totalPages || totalPages === 0} className="p-1 border rounded disabled:opacity-30"><ChevronRight size={14} /></button>
                     <button onClick={() => setActivePage(totalPages)} disabled={activePage === totalPages || totalPages === 0} className="p-1 border rounded disabled:opacity-30"><ChevronsRight size={14} /></button>
                  </div>
-                 {/* [중요] 더 보기 버튼 (비용 절약을 위한 페이징) */}
-                 <div className="flex-1 flex justify-end">
-                    {/* 전체 로드 방식이므로 더보기 버튼 숨김 (이미 다 가져옴) */}
-                 </div>
+                 <div className="flex-1 flex justify-end"></div>
               </div>
+            </div>
+          )}
+
+          {/* [검색 결과 화면 - 게시판별 분리] */}
+          {viewMode === 'search' && (
+            <div className="space-y-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        <Search className="w-6 h-6 text-indigo-600" />
+                        '{searchQuery}' 검색 결과 <span className="text-sm font-normal text-slate-500">총 {searchResults.length}건</span>
+                    </h2>
+                    <button onClick={handleBackToList} className="flex items-center gap-1 px-4 py-2 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 text-sm font-bold text-slate-600 transition-colors">
+                        <ArrowLeft size={16} /> 목록으로 돌아가기
+                    </button>
+                </div>
+
+                {categories.map(cat => (
+                    cat.boards.map(board => {
+                        // 해당 게시판의 검색 결과 필터링
+                        const boardPosts = searchResults.filter(p => p.boardId === board.id);
+                        if (boardPosts.length === 0) return null;
+
+                        return (
+                            <div key={board.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-8 bg-indigo-500 rounded-full"></div>
+                                        <h3 className="font-bold text-slate-800">{board.name}</h3>
+                                        <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-bold">{boardPosts.length}건</span>
+                                    </div>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[600px] table-fixed text-sm">
+                                        <colgroup><col className="w-16"/><col/><col className="w-24"/><col className="w-32"/><col className="w-20"/></colgroup>
+                                        <thead className="bg-white text-slate-500 border-b border-slate-100 text-xs uppercase">
+                                            <tr><th className="py-3 font-bold">번호</th><th className="font-bold text-left px-4">제목</th><th className="font-bold">작성자</th><th className="font-bold">등록일</th><th className="font-bold">조회</th></tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {boardPosts.map((post, idx) => (
+                                                <tr key={post.docId} onClick={() => handlePostClick(post)} className="hover:bg-indigo-50/50 cursor-pointer transition-colors">
+                                                    <td className="text-center py-3 text-slate-400">{idx + 1}</td>
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-medium text-slate-800 line-clamp-1">{post.title}</div>
+                                                        <div className="text-xs text-slate-400 mt-0.5 line-clamp-1">{stripHtml(post.content).substring(0, 50)}...</div>
+                                                    </td>
+                                                    <td className="text-center text-slate-600">{post.author}</td>
+                                                    <td className="text-center text-slate-400 text-xs">{formatDisplayDate(post.date)}</td>
+                                                    <td className="text-center text-slate-400 text-xs">{post.views}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        );
+                    })
+                ))}
+                
+                {searchResults.length === 0 && (
+                    <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+                        <Search className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500 font-medium">검색 결과가 없습니다.</p>
+                    </div>
+                )}
             </div>
           )}
 
@@ -1575,7 +1663,7 @@ const InternalBoard = () => {
                       ) : (
                         <>
                           <button onClick={handleEditPost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition-colors"><Edit size={16} /> 수정</button>
-                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={14} /> 삭제</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 삭제</button>
                         </>
                       )}
                 </div>
@@ -1841,7 +1929,7 @@ const InternalBoard = () => {
             <div className="p-8 text-center">
               <div className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center mb-4 ${modalConfig.type === 'confirm' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}><AlertCircle size={28} /></div>
               <h3 className="text-xl font-bold text-slate-900 mb-2">{modalConfig.type === 'confirm' ? '확인해 주세요' : '알림'}</h3>
-              <p className="text-sm text-slate-500 leading-relaxed font-medium whitespace-pre-wrap">{modalConfig.message}</p>
+              <p className="text-sm text-slate-500 leading-relaxed font-medium">{modalConfig.message}</p>
             </div>
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
               {modalConfig.type === 'confirm' && <button onClick={closeModal} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-50 transition-colors shadow-sm">취소</button>}
