@@ -33,8 +33,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// 캐시 키 상수 (버전 업하여 기존 꼬인 캐시 무시)
-const CACHE_KEY_PREFIX = 'board_cache_final_v1_';
+// 캐시 키 상수
+const CACHE_KEY_PREFIX = 'board_cache_v26_'; 
+
+// 텍스트 정규화 함수 (공백 제거)
+const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
 
 // 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
@@ -54,7 +57,6 @@ const InternalBoard = () => {
   // 1. 상태(State) 선언부
   // ==================================================================================
   
-  // 로그인 상태 유지
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -68,13 +70,11 @@ const InternalBoard = () => {
   const [loginPw, setLoginPw] = useState('');
   const apiKey = ""; 
 
-  // 게시글 데이터
+  // [수정] 누락되었던 boardTotalCount 복구
   const [posts, setPosts] = useState([]);
   const [lastVisible, setLastVisible] = useState(null); 
   const [hasMore, setHasMore] = useState(true); 
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
-  
-  // [중요] 게시판별 총 개수를 저장하는 상태 (번호 표시용)
   const [boardTotalCount, setBoardTotalCount] = useState(0); 
   
   const [selectedPost, setSelectedPost] = useState(null);
@@ -209,9 +209,7 @@ const InternalBoard = () => {
     });
   };
 
-  const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
-
-  // [기능] 게시판별 총 개수 가져오기 (정확한 번호 표시용)
+  // [기능] 게시판별 총 개수 가져오기
   const fetchBoardCount = async () => {
     if (!currentUser) return;
     
@@ -223,7 +221,6 @@ const InternalBoard = () => {
     } else if (activeBoardId === 'bookmark') {
         q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
     } else {
-        // [핵심] 숫자형으로 변환하여 쿼리 (업로드시 숫자로 저장됨)
         q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
     }
 
@@ -240,7 +237,7 @@ const InternalBoard = () => {
   const fetchInitialPosts = async (forceRefresh = false) => {
     if (!currentUser) { setPosts([]); return; }
     
-    fetchBoardCount(); // 카운트 갱신
+    fetchBoardCount();
 
     const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
 
@@ -253,7 +250,7 @@ const InternalBoard = () => {
                     setPosts(posts);
                     setBoardTotalCount(count); 
                     setLastVisible(null);
-                    setHasMore(true); 
+                    setHasMore(false);
                     return; 
                 }
             } catch (e) { console.error("Cache parsing error", e); }
@@ -263,86 +260,39 @@ const InternalBoard = () => {
     setIsLoadingPosts(true);
     try {
         const postsRef = collection(db, "posts");
-        
-        // [최적화] 인덱스 없이 안전하게 가져오기 위해 200개 로드 후 클라이언트 필터링
-        const q = query(postsRef, orderBy("id", "desc"), limit(200)); 
+        let q;
+
+        // 인덱스 오류 없이 최신순 보장을 위해 전체 로드 후 메모리 정렬
+        if (activeBoardId === 'trash') {
+             q = query(postsRef, where("isDeleted", "==", true));
+        } else if (activeBoardId === 'bookmark') {
+             q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
+        } else {
+             q = query(
+                 postsRef, 
+                 where("boardId", "==", Number(activeBoardId)), 
+                 where("isDeleted", "==", false)
+             );
+        }
         
         const documentSnapshots = await getDocs(q);
-        const rawDocs = documentSnapshots.docs;
+        const loadedPosts = documentSnapshots.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
         
-        if (rawDocs.length > 0) {
-            setLastVisible(rawDocs[rawDocs.length - 1]);
-        }
-
-        const loadedPosts = rawDocs.map(doc => ({ ...doc.data(), docId: doc.id }));
-        const filteredPosts = filterPostsInMemory(loadedPosts);
+        // 메모리에서 ID 역순(최신순) 정렬
+        loadedPosts.sort((a, b) => b.id - a.id);
         
-        setPosts(filteredPosts);
-        setHasMore(rawDocs.length === 200);
+        setPosts(loadedPosts);
+        setHasMore(false); 
         
         sessionStorage.setItem(cacheKey, JSON.stringify({
-            posts: filteredPosts,
+            posts: loadedPosts,
             timestamp: Date.now(),
-            count: boardTotalCount 
+            count: loadedPosts.length 
         }));
         
     } catch (error) {
         console.error("Error fetching posts:", error);
-        showAlert("데이터 로딩 실패: " + error.message);
-    } finally {
-        setIsLoadingPosts(false);
-    }
-  };
-
-  // [중요] 메모리 내 필터링 (타입 불일치 방지 위해 == 사용)
-  const filterPostsInMemory = (postsToFilter) => {
-      return postsToFilter.filter(p => {
-          if (activeBoardId === 'trash') return p.isDeleted === true;
-          if (activeBoardId === 'bookmark') return p.isBookmarked === true && p.isDeleted === false;
-          
-          if (activeBoardId) {
-             return p.boardId == activeBoardId && p.isDeleted === false;
-          }
-          return p.isDeleted === false;
-      });
-  };
-
-  const fetchMorePosts = async () => {
-    if (!lastVisible) return;
-    
-    setIsLoadingPosts(true);
-    try {
-        const q = query(
-            collection(db, "posts"), 
-            orderBy("id", "desc"),
-            startAfter(lastVisible), 
-            limit(200) 
-        );
-        
-        const documentSnapshots = await getDocs(q);
-        const rawDocs = documentSnapshots.docs;
-        
-        if (rawDocs.length > 0) {
-            setLastVisible(rawDocs[rawDocs.length - 1]);
-            
-            const newPosts = rawDocs.map(doc => ({ ...doc.data(), docId: doc.id }));
-            const filteredNewPosts = filterPostsInMemory(newPosts);
-            
-            const updatedPosts = [...posts, ...filteredNewPosts];
-            setPosts(updatedPosts);
-            setHasMore(rawDocs.length === 200);
-
-            const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
-            sessionStorage.setItem(cacheKey, JSON.stringify({
-                posts: updatedPosts,
-                timestamp: Date.now(),
-                count: boardTotalCount
-            }));
-        } else {
-            setHasMore(false);
-        }
-    } catch (error) {
-        console.error("Error fetching more posts:", error);
+        showAlert("데이터 로딩 실패: " + String(error.message));
     } finally {
         setIsLoadingPosts(false);
     }
@@ -368,6 +318,50 @@ const InternalBoard = () => {
     return categories[1]?.boards[0] || { id: 0, name: '게시판 없음' };
   };
   const activeBoard = getActiveBoard();
+
+  // [복구] 검색 기능 - 중요: 반드시 정의되어야 함
+  const handleGlobalSearch = () => { 
+      if(!searchInput.trim()) {
+          showAlert("검색어를 입력해주세요.");
+          return;
+      }
+      setSearchQuery(searchInput);
+      setViewMode('search');
+      setActivePage(1);
+  };
+  
+  // 검색 결과 계산 (메모리 내)
+  const getSearchResults = () => {
+    if (!searchQuery) return [];
+    const query = searchQuery.toLowerCase();
+    return posts.filter(post => {
+        if (post.isDeleted) return false;
+        const textContent = (post.content || '').replace(/<[^>]*>/g, '').toLowerCase();
+        return post.title.toLowerCase().includes(query) || textContent.includes(query);
+    });
+  };
+
+  const searchResults = getSearchResults();
+  
+  const searchBoardStats = searchResults.reduce((acc, post) => {
+    acc[post.boardId] = (acc[post.boardId] || 0) + 1;
+    return acc;
+  }, {});
+
+  // 필터링된 포스트 계산
+  const filteredPosts = viewMode === 'search' 
+    ? (searchFilterBoardId === 'all' 
+        ? searchResults
+        : searchResults.filter(p => p.boardId === parseInt(searchFilterBoardId)))
+    : posts;
+  
+  const indexOfLastPost = activePage * postsPerPage; 
+  const indexOfFirstPost = indexOfLastPost - postsPerPage; 
+  const currentPosts = filteredPosts.slice(indexOfFirstPost, indexOfLastPost); 
+  const totalPages = Math.ceil(filteredPosts.length / postsPerPage);
+  const pageGroupSize = 10; 
+  const startPage = (Math.ceil(activePage / pageGroupSize) - 1) * pageGroupSize + 1; 
+  const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
 
   const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
   const formatDisplayDate = (full) => { if (!full) return ''; const [d, t] = full.split(' '); return d === getTodayString() ? t : d; };
@@ -400,6 +394,14 @@ const InternalBoard = () => {
       setViewMode('login'); 
   });
 
+  const handleGoToWrite = () => { 
+    let content = ''; 
+    const ab = getActiveBoard(); 
+    if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); 
+    setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); 
+    setViewMode('write'); 
+  };
+
   const handleWriteSubmit = async () => {
     if (!writeForm.title.trim()) { showAlert("제목을 입력해주세요."); return; }
     const today = new Date();
@@ -417,8 +419,6 @@ const InternalBoard = () => {
 
         if (writeForm.docId) {
             await updateDoc(doc(db, "posts", writeForm.docId), postData);
-            
-            // 로컬 즉시 반영
             setPosts(posts.map(p => p.docId === writeForm.docId ? { ...p, ...postData } : p));
             if (selectedPost && selectedPost.docId === writeForm.docId) {
                 setSelectedPost({ ...selectedPost, ...postData });
@@ -441,7 +441,56 @@ const InternalBoard = () => {
         
         localStorage.removeItem('internalBoard_temp');
         setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] });
-    } catch (e) { console.error(e); showAlert("저장 실패: " + e.message); }
+    } catch (e) { console.error(e); showAlert("저장 실패: " + String(e.message)); }
+  };
+  
+  const handleEditPost = () => { 
+    if(!selectedPost) return; 
+    setWriteForm({ 
+        id: selectedPost.id, docId: selectedPost.docId, 
+        title: selectedPost.title, content: selectedPost.content, 
+        titleColor: selectedPost.titleColor || 'text-slate-900', 
+        titleSize: selectedPost.titleSize || 'text-[14pt]', 
+        attachments: selectedPost.attachments || [] 
+    }); 
+    setViewMode('write'); 
+  };
+  
+  const handleTempSave = () => { localStorage.setItem('internalBoard_temp', JSON.stringify(writeForm)); showAlert("임시 저장됨"); };
+  
+  const handleSelectAllCheckbox = (e) => setSelectedIds(e.target.checked ? filteredPosts.map(p => p.docId) : []);
+  const toggleSelection = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  
+  const handleFileChange = (e) => { if(e.target.files) setWriteForm(p => ({...p, attachments:[...p.attachments, ...Array.from(e.target.files).map(f=>({name:f.name, size:(f.size/1024).toFixed(1)+'KB'}))]})); };
+  const removeAttachment = (i) => setWriteForm(p => ({...p, attachments: p.attachments.filter((_, idx) => idx !== i)}));
+  
+  const callGeminiAI = async (prompt) => { setIsAiLoading(true); try { const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]}) }); const d = await r.json(); return d.candidates?.[0]?.content?.parts?.[0]?.text || null; } catch(e){ return null; } finally { setIsAiLoading(false); } };
+  const handleAiRefine = async () => { 
+    const txt = stripHtml(writeForm.content).trim();
+    if(!txt && !writeForm.title) { showAlert("내용 입력 필요"); return; }
+    const prompt = txt ? `다음 내용을 업무용으로 다듬어줘(HTML태그포함): "${txt}"` : `제목 "${writeForm.title}"에 맞는 공지사항 써줘`;
+    const result = await callGeminiAI(prompt);
+    if(result) {
+        const cleaned = result.replace(/```html|```/g, "").trim();
+        setWriteForm(p => ({...p, content: cleaned}));
+        if(contentRef.current) contentRef.current.innerHTML = cleaned;
+    }
+  };
+
+  const handleBackToList = () => { 
+      if (viewMode === 'detail' && searchQuery) { 
+          setViewMode('search'); 
+          setSelectedPost(null); 
+      } else { 
+          setSearchQuery('');
+          setSearchInput('');
+          setViewMode('list'); 
+          setSelectedPost(null); 
+          setSelectedIds([]); 
+          setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); 
+          // 목록 복귀 시 데이터 갱신
+          fetchInitialPosts(false);
+      }
   };
 
   const handleDeletePost = async () => {
@@ -487,7 +536,6 @@ const InternalBoard = () => {
             setPosts(posts.map(p => selectedIds.includes(p.docId) ? { ...p, isDeleted: false } : p));
             if (activeBoardId === 'trash') {
                  setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
-                 setBoardTotalCount(prev => Math.max(0, prev - targets.length));
             }
           }
           setSelectedIds([]);
@@ -508,7 +556,6 @@ const InternalBoard = () => {
           
           if (activeBoardId === 'trash') {
                setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
-               setBoardTotalCount(prev => Math.max(0, prev - targets.length));
           }
           setSelectedIds([]);
       });
@@ -562,23 +609,40 @@ const InternalBoard = () => {
   };
 
   const handlePostClick = async (post) => {
-    const storageKey = `read_post_${post.docId}`;
-    const alreadyRead = sessionStorage.getItem(storageKey);
-
-    if (post.docId && !alreadyRead) {
-        const postRef = doc(db, "posts", post.docId);
-        updateDoc(postRef, { views: increment(1) }).catch(console.error);
-        sessionStorage.setItem(storageKey, 'true');
-        setPosts(posts.map(p => p.docId === post.docId ? { ...p, views: (p.views || 0) + 1 } : p));
-    }
+    if (!post) return;
+    
     setSelectedPost(post);
     setViewMode('detail');
+
+    if (post.docId) {
+        try {
+            const storageKey = `read_post_${post.docId}`;
+            const alreadyRead = sessionStorage.getItem(storageKey);
+
+            if (!alreadyRead) {
+                const postRef = doc(db, "posts", post.docId);
+                updateDoc(postRef, { views: increment(1) }).catch(e => console.warn("View update failed", e));
+                sessionStorage.setItem(storageKey, 'true');
+                
+                setPosts(prevPosts => 
+                  prevPosts.map(p => p.docId === post.docId ? { ...p, views: (p.views || 0) + 1 } : p)
+                );
+            }
+        } catch (e) {
+            console.error("Post click logic error:", e);
+        }
+    }
   };
 
   const handleToggleBookmark = async (post) => {
     try { 
-        await updateDoc(doc(db, "posts", post.docId), { isBookmarked: !post.isBookmarked }); 
-        setPosts(posts.map(p => p.docId === post.docId ? { ...p, isBookmarked: !post.isBookmarked } : p));
+        const newStatus = !post.isBookmarked;
+        await updateDoc(doc(db, "posts", post.docId), { isBookmarked: newStatus }); 
+        setPosts(posts.map(p => p.docId === post.docId ? { ...p, isBookmarked: newStatus } : p));
+        
+        if (selectedPost && selectedPost.docId === post.docId) {
+             setSelectedPost({ ...selectedPost, isBookmarked: newStatus });
+        }
         clearCache();
     } catch (e) { console.error(e); }
   };
@@ -682,13 +746,11 @@ const InternalBoard = () => {
     });
   };
 
-  // --- 대용량 일괄 저장 로직 (업로드) ---
   const saveImportedDataToDB = async (importedPosts) => {
     setIsProcessing(true); 
     try {
         clearCache(); 
 
-        // 1. 기존 데이터 전체 삭제 (중복 방지)
         const postsRef = collection(db, "posts");
         const snapshot = await getDocs(postsRef); 
         
@@ -710,7 +772,6 @@ const InternalBoard = () => {
             }
         }
 
-        // 2. 새 데이터 추가
         const addChunkSize = 400;
         const addBatches = [];
         
@@ -748,12 +809,68 @@ const InternalBoard = () => {
     } catch (e) {
         setIsProcessing(false); 
         console.error(e);
-        showAlert("데이터 처리 중 오류가 발생했습니다: " + e.message);
+        showAlert("데이터 처리 중 오류가 발생했습니다: " + String(e.message));
     }
   };
 
-  // [수정] 엑셀 내보내기 (분류별 시트 & 각 시트별 번호 매기기)
+  const getDatabaseStats = async () => {
+    try {
+        const stats = {};
+        const postsRef = collection(db, "posts");
+        let total = 0;
+
+        const countPromises = [];
+        const boardNames = [];
+
+        categories.forEach(cat => {
+            cat.boards.forEach(board => {
+                if (board.id !== 'bookmark' && board.id !== 'trash') {
+                    const q = query(postsRef, where("boardId", "==", board.id), where("isDeleted", "==", false));
+                    countPromises.push(getCountFromServer(q));
+                    boardNames.push(board.name);
+                }
+            });
+        });
+
+        const snapshots = await Promise.all(countPromises);
+        
+        snapshots.forEach((snap, idx) => {
+            const count = snap.data().count;
+            if (count > 0) {
+                stats[boardNames[idx]] = count;
+                total += count;
+            }
+        });
+
+        return { stats, total };
+    } catch (e) {
+        console.error("Failed to get stats:", e);
+        return null;
+    }
+  };
+
+
   const handleExportExcel = async () => {
+    setIsProcessing(true);
+    const dbStats = await getDatabaseStats();
+    setIsProcessing(false);
+
+    let confirmMsg = "전체 게시글 데이터를 다운로드하시겠습니까?\n\n";
+    if (dbStats && dbStats.total > 0) {
+        confirmMsg += "[서버 데이터 현황]\n";
+        for (const [name, count] of Object.entries(dbStats.stats)) {
+             confirmMsg += `- ${name}: ${count}건\n`;
+        }
+        confirmMsg += `\n총 ${dbStats.total}건 (예상)\n`;
+    } else {
+        confirmMsg += "(데이터 통계를 불러오지 못했거나 데이터가 없습니다.)\n";
+    }
+    confirmMsg += "\n[주의] '확인'을 누르면 전체 데이터를 읽어오므로 데이터 사용량이 발생합니다.";
+
+    showConfirm(confirmMsg, processExportExcel);
+  };
+
+  const processExportExcel = async () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
     
@@ -764,7 +881,6 @@ const InternalBoard = () => {
         const allPosts = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
         const activePosts = allPosts.filter(p => !p.isDeleted);
         
-        // 1. 분류별 그룹화
         const groupedData = {};
         activePosts.forEach((post) => {
             const category = post.category || '기타';
@@ -778,10 +894,8 @@ const InternalBoard = () => {
             const ws = XLSX_LIB.utils.json_to_sheet([]);
             XLSX_LIB.utils.book_append_sheet(wb, ws, "데이터없음");
         } else {
-            // 2. 시트 생성 및 번호 매기기
             Object.keys(groupedData).forEach(category => {
                 const postsInCategory = groupedData[category];
-                // 번호 재할당: 총 개수에서 내림차순으로
                 const sheetData = postsInCategory.map((post, idx) => ({
                     '번호': postsInCategory.length - idx, 
                     '분류': post.category, 
@@ -802,7 +916,7 @@ const InternalBoard = () => {
         XLSX_LIB.writeFile(wb, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.xlsx`);
     } catch (e) {
         console.error(e);
-        showAlert("백업 중 오류가 발생했습니다: " + e.message);
+        showAlert("백업 중 오류가 발생했습니다: " + String(e.message));
     } finally {
         setIsProcessing(false);
     }
@@ -813,7 +927,6 @@ const InternalBoard = () => {
       excelInputRef.current?.click(); 
   };
   
-  // [수정] 엑셀 불러오기 (모든 시트 순회)
   const handleImportExcelChange = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     const XLSX_LIB = getXLSX();
@@ -825,7 +938,6 @@ const InternalBoard = () => {
         const data = new Uint8Array(event.target.result);
         const workbook = XLSX_LIB.read(data, { type: 'array' });
         
-        // [중요] 모든 시트 데이터 수집
         let jsonData = [];
         workbook.SheetNames.forEach(sheetName => {
             const sheetData = XLSX_LIB.utils.sheet_to_json(workbook.Sheets[sheetName]);
@@ -885,7 +997,7 @@ const InternalBoard = () => {
              saveImportedDataToDB(parsedPosts);
         });
 
-      } catch (error) { showAlert("엑셀 처리 오류: " + error.message); }
+      } catch (error) { showAlert("엑셀 처리 오류: " + String(error.message)); }
     };
     reader.readAsArrayBuffer(file); e.target.value = '';
   };
@@ -898,16 +1010,48 @@ const InternalBoard = () => {
         try { 
             const importedData = JSON.parse(event.target.result); 
             if (Array.isArray(importedData)) {
-                showConfirm(`주의: 기존 게시글을 모두 삭제하고\n백업 파일의 ${importedData.length}건으로 교체하시겠습니까?`, () => { 
+                const importStats = {};
+                importedData.forEach(post => {
+                    const cat = post.category || '기타';
+                    importStats[cat] = (importStats[cat] || 0) + 1;
+                });
+
+                let statsMsg = "JSON 파일 분석 결과:\n\n";
+                for (const [cat, count] of Object.entries(importStats)) {
+                    statsMsg += `- ${cat}: ${count}건\n`;
+                }
+                statsMsg += `\n총 ${importedData.length}건의 데이터를 발견했습니다.\n\n[주의] '확인'을 누르면 기존 게시글을 *모두 삭제*하고 덮어씁니다. 진행하시겠습니까?`;
+
+                showConfirm(statsMsg, () => { 
                     saveImportedDataToDB(importedData);
                 }); 
+            } else {
+                showAlert("올바른 JSON 파일 형식이 아닙니다 (배열 아님).");
             }
-        } catch (error) { showAlert("파일 오류"); } 
+        } catch (error) { showAlert("파일 오류: " + String(error.message)); } 
     };
     reader.readAsText(file); e.target.value = ''; 
   };
   
-  const handleExportJSON = async () => { 
+  const handleExportJSON = async () => {
+    setIsProcessing(true);
+    const dbStats = await getDatabaseStats();
+    setIsProcessing(false);
+
+    let confirmMsg = "전체 데이터 백업(JSON)을 진행하시겠습니까?\n\n";
+    if (dbStats && dbStats.total > 0) {
+        confirmMsg += "[서버 데이터 현황]\n";
+        for (const [name, count] of Object.entries(dbStats.stats)) {
+             confirmMsg += `- ${name}: ${count}건\n`;
+        }
+        confirmMsg += `\n총 ${dbStats.total}건 (예상)\n`;
+    }
+    confirmMsg += "\n[주의] '확인'을 누르면 전체 데이터를 읽어오므로 데이터 사용량이 발생합니다.";
+
+    showConfirm(confirmMsg, processExportJSON);
+  };
+
+  const processExportJSON = async () => { 
     setIsProcessing(true);
     try {
         const q = query(collection(db, "posts"), orderBy("id", "desc"));
@@ -918,7 +1062,7 @@ const InternalBoard = () => {
         downloadFile(jsonContent, `LOUDERS_Board_Backup_${new Date().toLocaleDateString()}.json`, 'application/json'); 
     } catch (e) {
         console.error(e);
-        showAlert("백업 중 오류가 발생했습니다: " + e.message);
+        showAlert("백업 중 오류가 발생했습니다: " + String(e.message));
     } finally {
         setIsProcessing(false);
     }
@@ -973,124 +1117,6 @@ const InternalBoard = () => {
     printWindow.document.close();
   };
 
-  const handleGlobalSearch = async () => { 
-      if(!searchInput.trim()) return; 
-      
-      setIsLoadingPosts(true);
-      try {
-          const postsRef = collection(db, "posts");
-          const q = query(postsRef, orderBy("id", "desc"));
-          const snapshot = await getDocs(q);
-          const allPosts = snapshot.docs.map(doc => ({...doc.data(), docId: doc.id}));
-          
-          setPosts(allPosts);
-          setHasMore(false); 
-          
-          setSearchQuery(searchInput); 
-          setViewMode('search'); 
-          setSearchFilterBoardId('all'); 
-          setActivePage(1);
-          
-          if (allPosts.length === 0) {
-             showAlert("조건에 맞는 검색 결과가 없습니다.");
-          }
-      } catch(e) {
-          showAlert("검색 중 오류 발생: " + e.message);
-      } finally {
-          setIsLoadingPosts(false);
-      }
-  };
-  
-  const getSearchResults = () => {
-    if (!searchQuery) return [];
-    const query = searchQuery.toLowerCase();
-    return posts.filter(post => {
-        if (post.isDeleted) return false;
-        const textContent = stripHtml(post.content).toLowerCase();
-        return post.title.toLowerCase().includes(query) || textContent.includes(query);
-    });
-  };
-  const searchResults = getSearchResults();
-  const searchBoardStats = searchResults.reduce((acc, post) => {
-    acc[post.boardId] = (acc[post.boardId] || 0) + 1;
-    return acc;
-  }, {});
-
-  const getFilteredSearchResults = () => {
-      if (searchFilterBoardId === 'all') return searchResults;
-      return searchResults.filter(p => p.boardId === parseInt(searchFilterBoardId));
-  };
-  const currentSearchResults = getFilteredSearchResults();
-
-  const getFilteredPosts = () => posts.filter(p => {
-      if (activeBoardId === 'trash') return p.isDeleted;
-      if (activeBoardId === 'bookmark') return p.isBookmarked && !p.isDeleted;
-      if (activeBoardId && activeBoardId !== 'trash' && activeBoardId !== 'bookmark') return p.boardId === activeBoardId && !p.isDeleted;
-      return !p.isDeleted;
-  });
-
-  const filteredPosts = viewMode === 'search' ? currentSearchResults : getFilteredPosts();
-  
-  const indexOfLastPost = activePage * postsPerPage; const indexOfFirstPost = indexOfLastPost - postsPerPage; 
-  const currentPosts = filteredPosts.slice(indexOfFirstPost, indexOfLastPost); 
-  const totalPages = Math.ceil(filteredPosts.length / postsPerPage);
-  const pageGroupSize = 10; const startPage = (Math.ceil(activePage / pageGroupSize) - 1) * pageGroupSize + 1; const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
-
-  const toggleCategory = (id) => setCategories(categories.map(c => c.id === id ? { ...c, isExpanded: !c.isExpanded } : c));
-  const handleBackToList = () => { 
-      if (viewMode === 'detail' && searchQuery) { setViewMode('search'); setSelectedPost(null); }
-      else { setViewMode('list'); setSelectedPost(null); setSelectedIds([]); setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); }
-  };
-  const handleGoToWrite = () => { let content = ''; const ab = getActiveBoard(); if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); setViewMode('write'); };
-  
-  const handleEditPost = () => { 
-    if(!selectedPost) return; 
-    setWriteForm({ 
-        id: selectedPost.id, docId: selectedPost.docId, 
-        title: selectedPost.title, content: selectedPost.content, 
-        titleColor: selectedPost.titleColor || 'text-slate-900', 
-        titleSize: selectedPost.titleSize || 'text-[14pt]', 
-        attachments: selectedPost.attachments || [] 
-    }); 
-    setViewMode('write'); 
-  };
-  const handleTempSave = () => { localStorage.setItem('internalBoard_temp', JSON.stringify(writeForm)); showAlert("임시 저장됨"); };
-  
-  const handleSelectAllCheckbox = (e) => setSelectedIds(e.target.checked ? filteredPosts.map(p => p.docId) : []);
-  const toggleSelection = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-  
-  const handleFileChange = (e) => { if(e.target.files) setWriteForm(p => ({...p, attachments:[...p.attachments, ...Array.from(e.target.files).map(f=>({name:f.name, size:(f.size/1024).toFixed(1)+'KB'}))]})); };
-  const removeAttachment = (i) => setWriteForm(p => ({...p, attachments: p.attachments.filter((_, idx) => idx !== i)}));
-  
-  const callGeminiAI = async (prompt) => { setIsAiLoading(true); try { const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]}) }); const d = await r.json(); return d.candidates?.[0]?.content?.parts?.[0]?.text || null; } catch(e){ return null; } finally { setIsAiLoading(false); } };
-  const handleAiRefine = async () => { 
-    const txt = stripHtml(writeForm.content).trim();
-    if(!txt && !writeForm.title) { showAlert("내용 입력 필요"); return; }
-    const prompt = txt ? `다음 내용을 업무용으로 다듬어줘(HTML태그포함): "${txt}"` : `제목 "${writeForm.title}"에 맞는 공지사항 써줘`;
-    const result = await callGeminiAI(prompt);
-    if(result) {
-        const cleaned = result.replace(/```html|```/g, "").trim();
-        setWriteForm(p => ({...p, content: cleaned}));
-        if(contentRef.current) contentRef.current.innerHTML = cleaned;
-    }
-  };
-
-  const applyFormatBlock = (tag) => document.execCommand('formatBlock', false, tag);
-  const applyFontSize = (size) => {
-    const selection = window.getSelection();
-    if (selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0);
-      if (range.collapsed) return;
-      const span = document.createElement("span");
-      span.style.fontSize = size;
-      try {
-        const content = range.extractContents();
-        span.appendChild(content);
-        range.insertNode(span);
-      } catch (e) { console.error(e); }
-    }
-  };
-
   const handleToolbarAction = (act, val, e) => { 
       e?.preventDefault(); 
       if (act === 'customFontSize') { applyFontSize(val); setShowFontSizePicker(false); }
@@ -1101,8 +1127,8 @@ const InternalBoard = () => {
   
   const titleColors = [{ name: 'Red', class: 'text-rose-600', bg: 'bg-rose-600' }, { name: 'Black', class: 'text-slate-900', bg: 'bg-slate-900' }, { name: 'Blue', class: 'text-indigo-600', bg: 'bg-indigo-600' }, { name: 'Green', class: 'text-emerald-600', bg: 'bg-emerald-600' }, { name: 'Amber', class: 'text-amber-600', bg: 'bg-amber-600' }, { name: 'Purple', class: 'text-purple-600', bg: 'bg-purple-600' }];
   
-  const showAlert = (message) => setModalConfig({ isOpen: true, type: 'alert', message, onConfirm: null });
-  const showConfirm = (message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', message, onConfirm });
+  const showAlert = (message) => setModalConfig({ isOpen: true, type: 'alert', message: String(message), onConfirm: null });
+  const showConfirm = (message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', message: String(message), onConfirm });
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
   const handleConfirmAction = () => { if (modalConfig.onConfirm) modalConfig.onConfirm(); closeModal(); };
 
@@ -1307,16 +1333,7 @@ const InternalBoard = () => {
                  </div>
                  {/* [중요] 더 보기 버튼 (비용 절약을 위한 페이징) */}
                  <div className="flex-1 flex justify-end">
-                    {hasMore && viewMode === 'list' && activeBoardId !== 'trash' && (
-                        <button 
-                            onClick={fetchMorePosts} 
-                            disabled={isLoadingPosts}
-                            className="text-xs font-bold text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
-                        >
-                            {isLoadingPosts ? <Loader2 size={14} className="animate-spin" /> : <MoreHorizontal size={14} />}
-                            이전 글 더 불러오기
-                        </button>
-                    )}
+                    {/* 전체 로드 방식이므로 더보기 버튼 숨김 (이미 다 가져옴) */}
                  </div>
               </div>
             </div>
@@ -1558,7 +1575,7 @@ const InternalBoard = () => {
                       ) : (
                         <>
                           <button onClick={handleEditPost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition-colors"><Edit size={16} /> 수정</button>
-                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 삭제</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={14} /> 삭제</button>
                         </>
                       )}
                 </div>
