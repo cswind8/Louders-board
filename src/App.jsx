@@ -34,9 +34,9 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v13_';
+const CACHE_KEY_PREFIX = 'board_cache_v16_'; // 버전 업
 
-// 텍스트 정규화 함수 (공백 제거) - 컴포넌트 외부로 이동하여 중복 방지
+// 텍스트 정규화 함수 (공백 제거)
 const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
 
 // 파일 다운로드 헬퍼 함수
@@ -299,6 +299,18 @@ const InternalBoard = () => {
     }
   };
 
+  const filterPostsInMemory = (postsToFilter) => {
+      return postsToFilter.filter(p => {
+          if (activeBoardId === 'trash') return p.isDeleted === true;
+          if (activeBoardId === 'bookmark') return p.isBookmarked === true && p.isDeleted === false;
+          
+          if (activeBoardId) {
+             return p.boardId == activeBoardId && p.isDeleted === false;
+          }
+          return p.isDeleted === false;
+      });
+  };
+
   const fetchMorePosts = async () => {
     if (!lastVisible) return;
     
@@ -489,7 +501,6 @@ const InternalBoard = () => {
             setPosts(posts.map(p => selectedIds.includes(p.docId) ? { ...p, isDeleted: false } : p));
             if (activeBoardId === 'trash') {
                  setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
-                 setBoardTotalCount(prev => Math.max(0, prev - targets.length));
             }
           }
           setSelectedIds([]);
@@ -510,7 +521,6 @@ const InternalBoard = () => {
           
           if (activeBoardId === 'trash') {
                setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
-               setBoardTotalCount(prev => Math.max(0, prev - targets.length));
           }
           setSelectedIds([]);
       });
@@ -563,18 +573,35 @@ const InternalBoard = () => {
     }
   };
 
+  // [수정] 상세보기 클릭 로직 개선 (안전장치 추가)
   const handlePostClick = async (post) => {
-    const storageKey = `read_post_${post.docId}`;
-    const alreadyRead = sessionStorage.getItem(storageKey);
-
-    if (post.docId && !alreadyRead) {
-        const postRef = doc(db, "posts", post.docId);
-        updateDoc(postRef, { views: increment(1) }).catch(console.error);
-        sessionStorage.setItem(storageKey, 'true');
-        setPosts(posts.map(p => p.docId === post.docId ? { ...p, views: (p.views || 0) + 1 } : p));
-    }
+    if (!post) return;
+    
+    // 1. 화면 전환을 먼저 수행 (반응성 향상)
     setSelectedPost(post);
     setViewMode('detail');
+
+    // 2. 조회수 증가 로직 (비동기 처리)
+    if (post.docId) {
+        try {
+            const storageKey = `read_post_${post.docId}`;
+            const alreadyRead = sessionStorage.getItem(storageKey);
+
+            if (!alreadyRead) {
+                const postRef = doc(db, "posts", post.docId);
+                // 조회수 업데이트는 실패해도 화면 표시에 영향 없도록 catch 처리
+                updateDoc(postRef, { views: increment(1) }).catch(e => console.warn("View update failed", e));
+                sessionStorage.setItem(storageKey, 'true');
+                
+                // 로컬 상태 업데이트 (함수형 업데이트 사용으로 안정성 확보)
+                setPosts(prevPosts => 
+                  prevPosts.map(p => p.docId === post.docId ? { ...p, views: (p.views || 0) + 1 } : p)
+                );
+            }
+        } catch (e) {
+            console.error("Post click logic error:", e);
+        }
+    }
   };
 
   const handleToggleBookmark = async (post) => {
@@ -751,7 +778,64 @@ const InternalBoard = () => {
     }
   };
 
+  const getDatabaseStats = async () => {
+    try {
+        const stats = {};
+        const postsRef = collection(db, "posts");
+        let total = 0;
+
+        const countPromises = [];
+        const boardNames = [];
+
+        categories.forEach(cat => {
+            cat.boards.forEach(board => {
+                if (board.id !== 'bookmark' && board.id !== 'trash') {
+                    const q = query(postsRef, where("boardId", "==", board.id), where("isDeleted", "==", false));
+                    countPromises.push(getCountFromServer(q));
+                    boardNames.push(board.name);
+                }
+            });
+        });
+
+        const snapshots = await Promise.all(countPromises);
+        
+        snapshots.forEach((snap, idx) => {
+            const count = snap.data().count;
+            if (count > 0) {
+                stats[boardNames[idx]] = count;
+                total += count;
+            }
+        });
+
+        return { stats, total };
+    } catch (e) {
+        console.error("Failed to get stats:", e);
+        return null;
+    }
+  };
+
+
   const handleExportExcel = async () => {
+    setIsProcessing(true);
+    const dbStats = await getDatabaseStats();
+    setIsProcessing(false);
+
+    let confirmMsg = "전체 게시글 데이터를 다운로드하시겠습니까?\n\n";
+    if (dbStats && dbStats.total > 0) {
+        confirmMsg += "[서버 데이터 현황]\n";
+        for (const [name, count] of Object.entries(dbStats.stats)) {
+             confirmMsg += `- ${name}: ${count}건\n`;
+        }
+        confirmMsg += `\n총 ${dbStats.total}건 (예상)\n`;
+    } else {
+        confirmMsg += "(데이터 통계를 불러오지 못했거나 데이터가 없습니다.)\n";
+    }
+    confirmMsg += "\n[주의] '확인'을 누르면 전체 데이터를 읽어오므로 데이터 사용량이 발생합니다.";
+
+    showConfirm(confirmMsg, processExportExcel);
+  };
+
+  const processExportExcel = async () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
     
@@ -777,7 +861,6 @@ const InternalBoard = () => {
         } else {
             Object.keys(groupedData).forEach(category => {
                 const postsInCategory = groupedData[category];
-                // 번호 재할당 (시트 내에서 내림차순)
                 const sheetData = postsInCategory.map((post, idx) => ({
                     '번호': postsInCategory.length - idx, 
                     '분류': post.category, 
@@ -892,16 +975,48 @@ const InternalBoard = () => {
         try { 
             const importedData = JSON.parse(event.target.result); 
             if (Array.isArray(importedData)) {
-                showConfirm(`주의: 기존 게시글을 모두 삭제하고\n백업 파일의 ${importedData.length}건으로 교체하시겠습니까?`, () => { 
+                const importStats = {};
+                importedData.forEach(post => {
+                    const cat = post.category || '기타';
+                    importStats[cat] = (importStats[cat] || 0) + 1;
+                });
+
+                let statsMsg = "JSON 파일 분석 결과:\n\n";
+                for (const [cat, count] of Object.entries(importStats)) {
+                    statsMsg += `- ${cat}: ${count}건\n`;
+                }
+                statsMsg += `\n총 ${importedData.length}건의 데이터를 발견했습니다.\n\n[주의] '확인'을 누르면 기존 게시글을 *모두 삭제*하고 덮어씁니다. 진행하시겠습니까?`;
+
+                showConfirm(statsMsg, () => { 
                     saveImportedDataToDB(importedData);
                 }); 
+            } else {
+                showAlert("올바른 JSON 파일 형식이 아닙니다 (배열 아님).");
             }
-        } catch (error) { showAlert("파일 오류"); } 
+        } catch (error) { showAlert("파일 오류: " + error.message); } 
     };
     reader.readAsText(file); e.target.value = ''; 
   };
   
-  const handleExportJSON = async () => { 
+  const handleExportJSON = async () => {
+    setIsProcessing(true);
+    const dbStats = await getDatabaseStats();
+    setIsProcessing(false);
+
+    let confirmMsg = "전체 데이터 백업(JSON)을 진행하시겠습니까?\n\n";
+    if (dbStats && dbStats.total > 0) {
+        confirmMsg += "[서버 데이터 현황]\n";
+        for (const [name, count] of Object.entries(dbStats.stats)) {
+             confirmMsg += `- ${name}: ${count}건\n`;
+        }
+        confirmMsg += `\n총 ${dbStats.total}건 (예상)\n`;
+    }
+    confirmMsg += "\n[주의] '확인'을 누르면 전체 데이터를 읽어오므로 데이터 사용량이 발생합니다.";
+
+    showConfirm(confirmMsg, processExportJSON);
+  };
+
+  const processExportJSON = async () => { 
     setIsProcessing(true);
     try {
         const q = query(collection(db, "posts"), orderBy("id", "desc"));
@@ -1552,7 +1667,7 @@ const InternalBoard = () => {
                       ) : (
                         <>
                           <button onClick={handleEditPost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition-colors"><Edit size={16} /> 수정</button>
-                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={14} /> 삭제</button>
+                          <button onClick={handleDeletePost} className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /> 삭제</button>
                         </>
                       )}
                 </div>
