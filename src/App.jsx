@@ -33,11 +33,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v16_'; // 버전 업
-
-// 텍스트 정규화 함수 (공백 제거)
-const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
+// 캐시 키 상수 (버전 업하여 기존 꼬인 캐시 무시)
+const CACHE_KEY_PREFIX = 'board_cache_final_v1_';
 
 // 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
@@ -57,6 +54,7 @@ const InternalBoard = () => {
   // 1. 상태(State) 선언부
   // ==================================================================================
   
+  // 로그인 상태 유지
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -70,10 +68,13 @@ const InternalBoard = () => {
   const [loginPw, setLoginPw] = useState('');
   const apiKey = ""; 
 
+  // 게시글 데이터
   const [posts, setPosts] = useState([]);
   const [lastVisible, setLastVisible] = useState(null); 
   const [hasMore, setHasMore] = useState(true); 
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+  
+  // [중요] 게시판별 총 개수를 저장하는 상태 (번호 표시용)
   const [boardTotalCount, setBoardTotalCount] = useState(0); 
   
   const [selectedPost, setSelectedPost] = useState(null);
@@ -208,6 +209,9 @@ const InternalBoard = () => {
     });
   };
 
+  const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
+
+  // [기능] 게시판별 총 개수 가져오기 (정확한 번호 표시용)
   const fetchBoardCount = async () => {
     if (!currentUser) return;
     
@@ -219,6 +223,7 @@ const InternalBoard = () => {
     } else if (activeBoardId === 'bookmark') {
         q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
     } else {
+        // [핵심] 숫자형으로 변환하여 쿼리 (업로드시 숫자로 저장됨)
         q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
     }
 
@@ -231,10 +236,11 @@ const InternalBoard = () => {
     }
   };
 
+  // [기능] 데이터 불러오기
   const fetchInitialPosts = async (forceRefresh = false) => {
     if (!currentUser) { setPosts([]); return; }
     
-    fetchBoardCount();
+    fetchBoardCount(); // 카운트 갱신
 
     const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
 
@@ -257,20 +263,9 @@ const InternalBoard = () => {
     setIsLoadingPosts(true);
     try {
         const postsRef = collection(db, "posts");
-        let q;
-
-        if (activeBoardId === 'trash') {
-             q = query(postsRef, where("isDeleted", "==", true), limit(100));
-        } else if (activeBoardId === 'bookmark') {
-             q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false), limit(100));
-        } else {
-             q = query(
-                 postsRef, 
-                 where("boardId", "==", Number(activeBoardId)), 
-                 where("isDeleted", "==", false),
-                 limit(100) 
-             );
-        }
+        
+        // [최적화] 인덱스 없이 안전하게 가져오기 위해 200개 로드 후 클라이언트 필터링
+        const q = query(postsRef, orderBy("id", "desc"), limit(200)); 
         
         const documentSnapshots = await getDocs(q);
         const rawDocs = documentSnapshots.docs;
@@ -280,13 +275,13 @@ const InternalBoard = () => {
         }
 
         const loadedPosts = rawDocs.map(doc => ({ ...doc.data(), docId: doc.id }));
-        loadedPosts.sort((a, b) => b.id - a.id);
+        const filteredPosts = filterPostsInMemory(loadedPosts);
         
-        setPosts(loadedPosts);
-        setHasMore(rawDocs.length === 100);
+        setPosts(filteredPosts);
+        setHasMore(rawDocs.length === 200);
         
         sessionStorage.setItem(cacheKey, JSON.stringify({
-            posts: loadedPosts,
+            posts: filteredPosts,
             timestamp: Date.now(),
             count: boardTotalCount 
         }));
@@ -299,6 +294,7 @@ const InternalBoard = () => {
     }
   };
 
+  // [중요] 메모리 내 필터링 (타입 불일치 방지 위해 == 사용)
   const filterPostsInMemory = (postsToFilter) => {
       return postsToFilter.filter(p => {
           if (activeBoardId === 'trash') return p.isDeleted === true;
@@ -316,22 +312,12 @@ const InternalBoard = () => {
     
     setIsLoadingPosts(true);
     try {
-        const postsRef = collection(db, "posts");
-        let q;
-
-        if (activeBoardId === 'trash') {
-             q = query(postsRef, where("isDeleted", "==", true), startAfter(lastVisible), limit(100));
-        } else if (activeBoardId === 'bookmark') {
-             q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false), startAfter(lastVisible), limit(100));
-        } else {
-             q = query(
-                 postsRef, 
-                 where("boardId", "==", Number(activeBoardId)), 
-                 where("isDeleted", "==", false),
-                 startAfter(lastVisible),
-                 limit(100)
-             );
-        }
+        const q = query(
+            collection(db, "posts"), 
+            orderBy("id", "desc"),
+            startAfter(lastVisible), 
+            limit(200) 
+        );
         
         const documentSnapshots = await getDocs(q);
         const rawDocs = documentSnapshots.docs;
@@ -340,13 +326,11 @@ const InternalBoard = () => {
             setLastVisible(rawDocs[rawDocs.length - 1]);
             
             const newPosts = rawDocs.map(doc => ({ ...doc.data(), docId: doc.id }));
-            newPosts.sort((a, b) => b.id - a.id);
+            const filteredNewPosts = filterPostsInMemory(newPosts);
             
-            const updatedPosts = [...posts, ...newPosts];
-            updatedPosts.sort((a, b) => b.id - a.id);
-
+            const updatedPosts = [...posts, ...filteredNewPosts];
             setPosts(updatedPosts);
-            setHasMore(rawDocs.length === 100);
+            setHasMore(rawDocs.length === 200);
 
             const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
             sessionStorage.setItem(cacheKey, JSON.stringify({
@@ -433,6 +417,8 @@ const InternalBoard = () => {
 
         if (writeForm.docId) {
             await updateDoc(doc(db, "posts", writeForm.docId), postData);
+            
+            // 로컬 즉시 반영
             setPosts(posts.map(p => p.docId === writeForm.docId ? { ...p, ...postData } : p));
             if (selectedPost && selectedPost.docId === writeForm.docId) {
                 setSelectedPost({ ...selectedPost, ...postData });
@@ -501,6 +487,7 @@ const InternalBoard = () => {
             setPosts(posts.map(p => selectedIds.includes(p.docId) ? { ...p, isDeleted: false } : p));
             if (activeBoardId === 'trash') {
                  setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
+                 setBoardTotalCount(prev => Math.max(0, prev - targets.length));
             }
           }
           setSelectedIds([]);
@@ -521,6 +508,7 @@ const InternalBoard = () => {
           
           if (activeBoardId === 'trash') {
                setPosts(posts.filter(p => !selectedIds.includes(p.docId)));
+               setBoardTotalCount(prev => Math.max(0, prev - targets.length));
           }
           setSelectedIds([]);
       });
@@ -573,35 +561,18 @@ const InternalBoard = () => {
     }
   };
 
-  // [수정] 상세보기 클릭 로직 개선 (안전장치 추가)
   const handlePostClick = async (post) => {
-    if (!post) return;
-    
-    // 1. 화면 전환을 먼저 수행 (반응성 향상)
+    const storageKey = `read_post_${post.docId}`;
+    const alreadyRead = sessionStorage.getItem(storageKey);
+
+    if (post.docId && !alreadyRead) {
+        const postRef = doc(db, "posts", post.docId);
+        updateDoc(postRef, { views: increment(1) }).catch(console.error);
+        sessionStorage.setItem(storageKey, 'true');
+        setPosts(posts.map(p => p.docId === post.docId ? { ...p, views: (p.views || 0) + 1 } : p));
+    }
     setSelectedPost(post);
     setViewMode('detail');
-
-    // 2. 조회수 증가 로직 (비동기 처리)
-    if (post.docId) {
-        try {
-            const storageKey = `read_post_${post.docId}`;
-            const alreadyRead = sessionStorage.getItem(storageKey);
-
-            if (!alreadyRead) {
-                const postRef = doc(db, "posts", post.docId);
-                // 조회수 업데이트는 실패해도 화면 표시에 영향 없도록 catch 처리
-                updateDoc(postRef, { views: increment(1) }).catch(e => console.warn("View update failed", e));
-                sessionStorage.setItem(storageKey, 'true');
-                
-                // 로컬 상태 업데이트 (함수형 업데이트 사용으로 안정성 확보)
-                setPosts(prevPosts => 
-                  prevPosts.map(p => p.docId === post.docId ? { ...p, views: (p.views || 0) + 1 } : p)
-                );
-            }
-        } catch (e) {
-            console.error("Post click logic error:", e);
-        }
-    }
   };
 
   const handleToggleBookmark = async (post) => {
@@ -711,11 +682,13 @@ const InternalBoard = () => {
     });
   };
 
+  // --- 대용량 일괄 저장 로직 (업로드) ---
   const saveImportedDataToDB = async (importedPosts) => {
     setIsProcessing(true); 
     try {
         clearCache(); 
 
+        // 1. 기존 데이터 전체 삭제 (중복 방지)
         const postsRef = collection(db, "posts");
         const snapshot = await getDocs(postsRef); 
         
@@ -737,6 +710,7 @@ const InternalBoard = () => {
             }
         }
 
+        // 2. 새 데이터 추가
         const addChunkSize = 400;
         const addBatches = [];
         
@@ -778,64 +752,8 @@ const InternalBoard = () => {
     }
   };
 
-  const getDatabaseStats = async () => {
-    try {
-        const stats = {};
-        const postsRef = collection(db, "posts");
-        let total = 0;
-
-        const countPromises = [];
-        const boardNames = [];
-
-        categories.forEach(cat => {
-            cat.boards.forEach(board => {
-                if (board.id !== 'bookmark' && board.id !== 'trash') {
-                    const q = query(postsRef, where("boardId", "==", board.id), where("isDeleted", "==", false));
-                    countPromises.push(getCountFromServer(q));
-                    boardNames.push(board.name);
-                }
-            });
-        });
-
-        const snapshots = await Promise.all(countPromises);
-        
-        snapshots.forEach((snap, idx) => {
-            const count = snap.data().count;
-            if (count > 0) {
-                stats[boardNames[idx]] = count;
-                total += count;
-            }
-        });
-
-        return { stats, total };
-    } catch (e) {
-        console.error("Failed to get stats:", e);
-        return null;
-    }
-  };
-
-
+  // [수정] 엑셀 내보내기 (분류별 시트 & 각 시트별 번호 매기기)
   const handleExportExcel = async () => {
-    setIsProcessing(true);
-    const dbStats = await getDatabaseStats();
-    setIsProcessing(false);
-
-    let confirmMsg = "전체 게시글 데이터를 다운로드하시겠습니까?\n\n";
-    if (dbStats && dbStats.total > 0) {
-        confirmMsg += "[서버 데이터 현황]\n";
-        for (const [name, count] of Object.entries(dbStats.stats)) {
-             confirmMsg += `- ${name}: ${count}건\n`;
-        }
-        confirmMsg += `\n총 ${dbStats.total}건 (예상)\n`;
-    } else {
-        confirmMsg += "(데이터 통계를 불러오지 못했거나 데이터가 없습니다.)\n";
-    }
-    confirmMsg += "\n[주의] '확인'을 누르면 전체 데이터를 읽어오므로 데이터 사용량이 발생합니다.";
-
-    showConfirm(confirmMsg, processExportExcel);
-  };
-
-  const processExportExcel = async () => {
     const XLSX_LIB = getXLSX();
     if (!XLSX_LIB) { showAlert("엑셀 도구 로딩 중..."); return; }
     
@@ -846,6 +764,7 @@ const InternalBoard = () => {
         const allPosts = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
         const activePosts = allPosts.filter(p => !p.isDeleted);
         
+        // 1. 분류별 그룹화
         const groupedData = {};
         activePosts.forEach((post) => {
             const category = post.category || '기타';
@@ -859,8 +778,10 @@ const InternalBoard = () => {
             const ws = XLSX_LIB.utils.json_to_sheet([]);
             XLSX_LIB.utils.book_append_sheet(wb, ws, "데이터없음");
         } else {
+            // 2. 시트 생성 및 번호 매기기
             Object.keys(groupedData).forEach(category => {
                 const postsInCategory = groupedData[category];
+                // 번호 재할당: 총 개수에서 내림차순으로
                 const sheetData = postsInCategory.map((post, idx) => ({
                     '번호': postsInCategory.length - idx, 
                     '분류': post.category, 
@@ -892,6 +813,7 @@ const InternalBoard = () => {
       excelInputRef.current?.click(); 
   };
   
+  // [수정] 엑셀 불러오기 (모든 시트 순회)
   const handleImportExcelChange = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     const XLSX_LIB = getXLSX();
@@ -903,6 +825,7 @@ const InternalBoard = () => {
         const data = new Uint8Array(event.target.result);
         const workbook = XLSX_LIB.read(data, { type: 'array' });
         
+        // [중요] 모든 시트 데이터 수집
         let jsonData = [];
         workbook.SheetNames.forEach(sheetName => {
             const sheetData = XLSX_LIB.utils.sheet_to_json(workbook.Sheets[sheetName]);
@@ -975,48 +898,16 @@ const InternalBoard = () => {
         try { 
             const importedData = JSON.parse(event.target.result); 
             if (Array.isArray(importedData)) {
-                const importStats = {};
-                importedData.forEach(post => {
-                    const cat = post.category || '기타';
-                    importStats[cat] = (importStats[cat] || 0) + 1;
-                });
-
-                let statsMsg = "JSON 파일 분석 결과:\n\n";
-                for (const [cat, count] of Object.entries(importStats)) {
-                    statsMsg += `- ${cat}: ${count}건\n`;
-                }
-                statsMsg += `\n총 ${importedData.length}건의 데이터를 발견했습니다.\n\n[주의] '확인'을 누르면 기존 게시글을 *모두 삭제*하고 덮어씁니다. 진행하시겠습니까?`;
-
-                showConfirm(statsMsg, () => { 
+                showConfirm(`주의: 기존 게시글을 모두 삭제하고\n백업 파일의 ${importedData.length}건으로 교체하시겠습니까?`, () => { 
                     saveImportedDataToDB(importedData);
                 }); 
-            } else {
-                showAlert("올바른 JSON 파일 형식이 아닙니다 (배열 아님).");
             }
-        } catch (error) { showAlert("파일 오류: " + error.message); } 
+        } catch (error) { showAlert("파일 오류"); } 
     };
     reader.readAsText(file); e.target.value = ''; 
   };
   
-  const handleExportJSON = async () => {
-    setIsProcessing(true);
-    const dbStats = await getDatabaseStats();
-    setIsProcessing(false);
-
-    let confirmMsg = "전체 데이터 백업(JSON)을 진행하시겠습니까?\n\n";
-    if (dbStats && dbStats.total > 0) {
-        confirmMsg += "[서버 데이터 현황]\n";
-        for (const [name, count] of Object.entries(dbStats.stats)) {
-             confirmMsg += `- ${name}: ${count}건\n`;
-        }
-        confirmMsg += `\n총 ${dbStats.total}건 (예상)\n`;
-    }
-    confirmMsg += "\n[주의] '확인'을 누르면 전체 데이터를 읽어오므로 데이터 사용량이 발생합니다.";
-
-    showConfirm(confirmMsg, processExportJSON);
-  };
-
-  const processExportJSON = async () => { 
+  const handleExportJSON = async () => { 
     setIsProcessing(true);
     try {
         const q = query(collection(db, "posts"), orderBy("id", "desc"));
