@@ -6,7 +6,7 @@ import {
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Indent, Outdent,
   Eye, Calendar, UserCircle, ArrowLeft, Edit, ArrowUp, ArrowDown, CheckSquare, AlertCircle, 
   ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Sparkles, Loader2,
-  Heading1, Heading2, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
+  Heading1, Heading2, Heading3, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
   ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal
 } from 'lucide-react';
 
@@ -34,7 +34,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v35_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v38_'; 
 
 // ==================================================================================
 // [중요] 보조 함수들을 컴포넌트 외부로 이동 (초기화 오류 방지)
@@ -156,7 +156,7 @@ const InternalBoard = () => {
   const [newBoardInput, setNewBoardInput] = useState({ categoryId: '', name: '' });
   const [editingItem, setEditingItem] = useState(null);
   const [newUser, setNewUser] = useState({ name: '', userId: '', password: '', dept: '', position: '' });
-  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: '', message: '', onConfirm: null });
+  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'alert', message: '', onConfirm: null });
 
   const [searchInput, setSearchInput] = useState(''); 
   const [searchQuery, setSearchQuery] = useState(''); 
@@ -172,7 +172,7 @@ const InternalBoard = () => {
 
   const [commentInput, setCommentInput] = useState('');
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showFontSizePicker, setShowFontSizePicker] = useState(false);
+  // const [showFontSizePicker, setShowFontSizePicker] = useState(false); // [수정] 폰트 사이즈 피커 삭제
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   const fileInputRef = useRef(null);
@@ -340,7 +340,6 @@ const InternalBoard = () => {
 
   // 목록 필터링
   const getFilteredPosts = () => {
-      // 검색 모드일 때는 currentSearchResults 사용
       if (viewMode === 'search') return currentSearchResults;
 
       return posts.filter(p => {
@@ -361,7 +360,6 @@ const InternalBoard = () => {
   const startPage = (Math.ceil(activePage / pageGroupSize) - 1) * pageGroupSize + 1; 
   const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
 
-  // [수정] 카테고리 토글 함수
   const toggleCategory = (id) => {
     setCategories(categories.map(c => c.id === id ? { ...c, isExpanded: !c.isExpanded } : c));
   };
@@ -376,7 +374,7 @@ const InternalBoard = () => {
   
   const handleRefresh = () => {
     setActivePage(1);
-    fetchInitialPosts(true);
+    fetchInitialPosts(true); // [수정] 강제 새로고침 (남이 쓴 글 보기 위해 true)
     showAlert("최신 목록을 불러왔습니다.");
   };
 
@@ -399,7 +397,7 @@ const InternalBoard = () => {
     if (user) { 
         setCurrentUser(user); 
         localStorage.setItem('board_user', JSON.stringify(user));
-        setModalConfig({ isOpen: false, type: '', message: '', onConfirm: null });
+        setModalConfig({ isOpen: false, type: 'alert', message: '', onConfirm: null });
         setViewMode('list'); 
         setLoginId(''); 
         setLoginPw(''); 
@@ -502,29 +500,21 @@ const InternalBoard = () => {
     }
   };
 
+  // [중요] 에디터 툴바 클릭 시 포커스 유지
   const handleToolbarAction = (act, val, e) => { 
-      if (e) e.preventDefault(); 
-      if (act === 'customFontSize') { applyFontSize(val); setShowFontSizePicker(false); }
-      else if (act === 'formatBlock') applyFormatBlock(val);
+      if (e) e.preventDefault(); // 버튼 클릭 시 에디터 포커스 잃지 않도록 방지
+      // if (act === 'customFontSize') { applyFontSize(val); setShowFontSizePicker(false); } // [수정] 폰트피커 삭제됨
+      if (act === 'formatBlock') applyFormatBlock(val);
       else document.execCommand(act, false, val); 
-      if(contentRef.current) setWriteForm(p => ({...p, content: contentRef.current.innerHTML})); 
+      
+      // 내용 업데이트
+      if(contentRef.current) {
+          setWriteForm(p => ({...p, content: contentRef.current.innerHTML})); 
+      }
   };
   
   const applyFormatBlock = (tag) => document.execCommand('formatBlock', false, tag);
-  const applyFontSize = (size) => {
-    const selection = window.getSelection();
-    if (selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0);
-      if (range.collapsed) return;
-      const span = document.createElement("span");
-      span.style.fontSize = size;
-      try {
-        const content = range.extractContents();
-        span.appendChild(content);
-        range.insertNode(span);
-      } catch (e) { console.error(e); }
-    }
-  };
+  // [수정] applyFontSize는 삭제됨 (버튼식으로 대체되어 formatBlock 사용)
   
   const titleColors = [{ name: 'Red', class: 'text-rose-600', bg: 'bg-rose-600' }, { name: 'Black', class: 'text-slate-900', bg: 'bg-slate-900' }, { name: 'Blue', class: 'text-indigo-600', bg: 'bg-indigo-600' }, { name: 'Green', class: 'text-emerald-600', bg: 'bg-emerald-600' }, { name: 'Amber', class: 'text-amber-600', bg: 'bg-amber-600' }, { name: 'Purple', class: 'text-purple-600', bg: 'bg-purple-600' }];
   
@@ -543,19 +533,15 @@ const InternalBoard = () => {
       setIsLoadingPosts(true);
       try {
           const postsRef = collection(db, "posts");
-          // 전체 데이터를 가져오기 위해 조건 없는 쿼리 사용
           const q = query(postsRef); 
           const snapshot = await getDocs(q);
           const allPosts = snapshot.docs.map(doc => ({...doc.data(), docId: doc.id}));
           
-          // 메모리에서 최신순 정렬
           allPosts.sort((a, b) => b.id - a.id);
           
-          // 상태 업데이트 (전체 데이터 로드)
           setPosts(allPosts);
           setHasMore(false); 
           
-          // 검색어 설정 및 모드 변경
           setSearchQuery(searchInput); 
           setViewMode('search'); 
           setSearchFilterBoardId('all'); 
@@ -666,8 +652,7 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash' || viewMode === 'search') { showAlert("이 목록에서는 이동 기능을 사용할 수 없습니다."); return; }
     if (selectedIds.length === 0) { showAlert("선택된 게시글이 없습니다."); return; }
     
-    // 현재 화면에 보이는 리스트 기준으로 이동
-    const currentList = [...filteredPosts];
+    const currentList = [...posts];
     let itemsToSwap = [];
 
     if (direction === 'up') {
@@ -1439,6 +1424,7 @@ const InternalBoard = () => {
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="overflow-x-auto">
                         <table className="w-full min-w-[800px] table-fixed text-sm">
+                            {/* [수정] py-3 -> py-2로 줄여서 시인성 확보 */}
                             <colgroup><col className="w-10"/><col className="w-16"/><col/><col className="w-12"/><col className="w-24"/><col className="w-32"/><col className="w-16"/></colgroup>
                             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                                 <tr>
@@ -1452,14 +1438,22 @@ const InternalBoard = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                                {currentSearchResults.length > 0 ? currentSearchResults.map((post, idx) => (
-                                    <tr key={post.docId} onClick={() => handlePostClick(post)} className="hover:bg-indigo-50/60 cursor-pointer text-sm">
+                                {currentSearchResults.length > 0 ? currentSearchResults.map((post, idx) => {
+                                    // [수정] 검색 시 실제 번호 계산 (전체 posts에서의 역순 인덱스)
+                                    // posts는 현재 최신순(역순)으로 정렬되어 있으므로, 전체 길이에서 현재 인덱스를 빼는 방식이 아니라
+                                    // 전체 갯수에서 해당 포스트의 인덱스를 빼는 것이 논리적입니다.
+                                    // posts[0] = 가장 최신글 (번호: N)
+                                    // posts[N-1] = 가장 옛날글 (번호: 1)
+                                    // 따라서 번호 = totalDocs - index
+                                    const realNumber = posts.length - posts.findIndex(p => p.docId === post.docId);
+                                    
+                                    return (
+                                    <tr key={post.docId} onClick={() => handlePostClick(post)} className="border-b hover:bg-slate-50 cursor-pointer text-sm">
                                         <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); /*검색에선 선택X*/}}>
                                             {/* 검색 결과에선 체크박스 비활성 */}
                                         </td>
                                         <td className="text-center py-2 text-slate-500">
-                                            {/* 검색 결과 번호는 전체 중 순서 */}
-                                            {searchResults.length - idx} 
+                                            {realNumber}
                                         </td>
                                         <td className="py-2 px-3">
                                             <div className="flex items-center gap-1.5">
@@ -1472,7 +1466,7 @@ const InternalBoard = () => {
                                         <td className="text-center text-slate-500 font-light">{formatDisplayDate(post.date)}</td>
                                         <td className="text-center text-slate-500 font-light">{post.views}</td>
                                     </tr>
-                                )) : (
+                                )}) : (
                                     <tr>
                                         <td colSpan="7" className="py-12 text-center text-slate-400">
                                             <Search className="w-10 h-10 mx-auto mb-2 text-slate-200" />
@@ -1496,6 +1490,7 @@ const InternalBoard = () => {
                 .wysiwyg-content p { margin-bottom: 1em; line-height: 1.7; }
                 .wysiwyg-content h1 { font-size: 2em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
                 .wysiwyg-content h2 { font-size: 1.5em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
+                .wysiwyg-content h3 { font-size: 1.25em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
               `}</style>
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
                 <div className="flex items-center gap-3 w-full">
@@ -1543,8 +1538,10 @@ const InternalBoard = () => {
                         </div>
 
                         <div className="flex items-center gap-0.5 border-r border-slate-200 pr-1.5 mr-1.5">
+                            {/* [수정] 폰트 크기 선택 대신 헤딩 버튼 추가 */}
                             <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H1', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 1"><Heading1 size={16} /></button>
                             <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H2', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 2"><Heading2 size={16} /></button>
+                            <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H3', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 3"><Heading3 size={16} /></button>
                             <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'P', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600 text-xs font-bold" title="본문">P</button>
                         </div>
                       <button onMouseDown={(e) => handleToolbarAction('bold', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="굵게"><Bold size={16} /></button>
@@ -1573,29 +1570,6 @@ const InternalBoard = () => {
                                         style={{ backgroundColor: color }}
                                         title={color}
                                     />
-                                ))}
-                            </div>
-                        )}
-                      </div>
-
-                      <div className="relative inline-block">
-                         <button 
-                            onMouseDown={(e) => { e.preventDefault(); setShowFontSizePicker(!showFontSizePicker); }} 
-                            className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" 
-                            title="글자 크기"
-                        >
-                            <Type size={16} />
-                        </button>
-                        {showFontSizePicker && (
-                             <div className="absolute top-full left-0 mt-1 p-1 bg-white border border-slate-200 rounded-lg shadow-xl flex flex-col z-50 w-[100px]">
-                                {['10px', '12px', '14px', '16px', '18px', '24px', '32px'].map((size) => (
-                                    <button
-                                        key={size}
-                                        onMouseDown={(e) => handleToolbarAction('customFontSize', size, e)}
-                                        className="text-left px-3 py-1.5 text-xs hover:bg-slate-50 text-slate-700 font-medium"
-                                    >
-                                        {size}
-                                    </button>
                                 ))}
                             </div>
                         )}
