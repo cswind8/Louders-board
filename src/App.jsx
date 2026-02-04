@@ -34,7 +34,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v46_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v47_'; 
 
 // 기본 카테고리 구조 (초기화용)
 const DEFAULT_CATEGORIES = [
@@ -112,28 +112,29 @@ const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof te
 
 const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
+// [수정] 게시판 ID 기반 직관적인(진한) 색상 생성기 (Vivid Colors)
 const getBoardColor = (boardId) => {
   const colors = [
-    { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200', active: 'bg-red-500', activeText: 'text-white' },
-    { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200', active: 'bg-orange-500', activeText: 'text-white' },
-    { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', active: 'bg-amber-500', activeText: 'text-white' },
-    { bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200', active: 'bg-yellow-500', activeText: 'text-white' },
-    { bg: 'bg-lime-100', text: 'text-lime-700', border: 'border-lime-200', active: 'bg-lime-500', activeText: 'text-white' },
-    { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-200', active: 'bg-green-500', activeText: 'text-white' },
-    { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', active: 'bg-emerald-500', activeText: 'text-white' },
-    { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-200', active: 'bg-teal-500', activeText: 'text-white' },
-    { bg: 'bg-cyan-100', text: 'text-cyan-700', border: 'border-cyan-200', active: 'bg-cyan-500', activeText: 'text-white' },
-    { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-200', active: 'bg-sky-500', activeText: 'text-white' },
-    { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200', active: 'bg-blue-500', activeText: 'text-white' },
-    { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-200', active: 'bg-indigo-500', activeText: 'text-white' },
-    { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-200', active: 'bg-violet-500', activeText: 'text-white' },
-    { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-200', active: 'bg-purple-500', activeText: 'text-white' },
-    { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-200', active: 'bg-fuchsia-500', activeText: 'text-white' },
-    { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-200', active: 'bg-pink-500', activeText: 'text-white' },
-    { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-200', active: 'bg-rose-500', activeText: 'text-white' },
+    { bg: 'bg-red-600', text: 'text-white', border: 'border-red-700', active: 'bg-red-800', activeText: 'text-white' },
+    { bg: 'bg-orange-600', text: 'text-white', border: 'border-orange-700', active: 'bg-orange-800', activeText: 'text-white' },
+    { bg: 'bg-amber-600', text: 'text-white', border: 'border-amber-700', active: 'bg-amber-800', activeText: 'text-white' },
+    { bg: 'bg-yellow-500', text: 'text-slate-900', border: 'border-yellow-600', active: 'bg-yellow-700', activeText: 'text-white' }, // 가독성 위해 노랑은 검은글씨
+    { bg: 'bg-lime-600', text: 'text-white', border: 'border-lime-700', active: 'bg-lime-800', activeText: 'text-white' },
+    { bg: 'bg-green-600', text: 'text-white', border: 'border-green-700', active: 'bg-green-800', activeText: 'text-white' },
+    { bg: 'bg-emerald-600', text: 'text-white', border: 'border-emerald-700', active: 'bg-emerald-800', activeText: 'text-white' },
+    { bg: 'bg-teal-600', text: 'text-white', border: 'border-teal-700', active: 'bg-teal-800', activeText: 'text-white' },
+    { bg: 'bg-cyan-600', text: 'text-white', border: 'border-cyan-700', active: 'bg-cyan-800', activeText: 'text-white' },
+    { bg: 'bg-sky-600', text: 'text-white', border: 'border-sky-700', active: 'bg-sky-800', activeText: 'text-white' },
+    { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700', active: 'bg-blue-800', activeText: 'text-white' },
+    { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-700', active: 'bg-indigo-800', activeText: 'text-white' },
+    { bg: 'bg-violet-600', text: 'text-white', border: 'border-violet-700', active: 'bg-violet-800', activeText: 'text-white' },
+    { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-700', active: 'bg-purple-800', activeText: 'text-white' },
+    { bg: 'bg-fuchsia-600', text: 'text-white', border: 'border-fuchsia-700', active: 'bg-fuchsia-800', activeText: 'text-white' },
+    { bg: 'bg-pink-600', text: 'text-white', border: 'border-pink-700', active: 'bg-pink-800', activeText: 'text-white' },
+    { bg: 'bg-rose-600', text: 'text-white', border: 'border-rose-700', active: 'bg-rose-800', activeText: 'text-white' },
   ];
   
-  if (boardId === 'all') return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', active: 'bg-slate-700', activeText: 'text-white' };
+  if (boardId === 'all') return { bg: 'bg-slate-700', text: 'text-white', border: 'border-slate-800', active: 'bg-slate-900', activeText: 'text-white' };
   
   let hash = 0;
   const str = String(boardId);
@@ -191,8 +192,7 @@ const InternalBoard = () => {
   const [newBoardInput, setNewBoardInput] = useState({ categoryId: '', name: '' });
   const [editingItem, setEditingItem] = useState(null);
   
-  // [수정] 회원 수정 기능을 위한 상태 추가
-  const [editingUser, setEditingUser] = useState(null); // 수정 중인 사용자 객체
+  const [editingUser, setEditingUser] = useState(null); 
   const [newUser, setNewUser] = useState({ name: '', userId: '', password: '', dept: '', position: '' });
   
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'alert', message: '', onConfirm: null });
@@ -335,16 +335,13 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash') {
         q = query(postsRef, where("isDeleted", "==", true));
     } else if (activeBoardId === 'bookmark') {
-        // [수정] 복합 인덱스 오류 방지를 위해, 메모리 필터링 방식으로 변경할 수 있으나
-        // array-contains 단독 사용은 인덱스 없이도 가능하므로 isDeleted 필터는 메모리에서 처리
-        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId));
+        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId), where("isDeleted", "==", false));
     } else {
         q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
     }
 
     try {
         const snapshot = await getCountFromServer(q);
-        // bookmark인 경우 isDeleted 체크가 쿼리에 없으므로 정확한 카운트는 아닐 수 있음 (허용)
         setBoardTotalCount(snapshot.data().count);
     } catch (e) {
         console.error("Count fetch error:", e);
@@ -383,8 +380,6 @@ const InternalBoard = () => {
         if (activeBoardId === 'trash') {
              q = query(postsRef, where("isDeleted", "==", true));
         } else if (activeBoardId === 'bookmark') {
-             // [수정] 인덱스 오류 해결을 위해 'isDeleted' 조건 제거 (array-contains와 복합 조건 시 인덱스 필요)
-             // 삭제된 글은 아래 map/filter 과정에서 걸러냅니다.
              q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId));
         } else {
              q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
@@ -397,7 +392,6 @@ const InternalBoard = () => {
             return { ...data, docId: doc.id, isBookmarked };
         });
 
-        // [추가] 북마크 게시판인 경우 삭제된 글 메모리에서 필터링
         if (activeBoardId === 'bookmark') {
             loadedPosts = loadedPosts.filter(p => !p.isDeleted);
         }
@@ -420,7 +414,7 @@ const InternalBoard = () => {
     } catch (error) {
         console.error("Error fetching posts:", error);
         if (error.code === 'failed-precondition') {
-            showAlert("시스템: 인덱스가 필요합니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
+            showAlert("시스템: 인덱스가 생성 중입니다. 잠시 후 다시 시도해주세요.");
         } else {
             showAlert("데이터 로딩 실패: " + error.message);
         }
@@ -1650,7 +1644,7 @@ const InternalBoard = () => {
                             if (foundBoard) boardName = foundBoard.name;
                             if (boardId === 'bookmark') boardName = '북마크';
                             
-                            // [수정] 게시판별 파스텔 톤 색상 적용
+                            // [수정] 게시판별 직관적인(진한) 색상 적용
                             const color = getBoardColor(boardId);
                             
                             return (
@@ -1659,7 +1653,7 @@ const InternalBoard = () => {
                                     onClick={() => setSearchFilterBoardId(boardId)}
                                     className={`px-4 py-2 rounded-full text-sm font-bold transition-all shadow-sm flex items-center gap-2 border ${String(searchFilterBoardId) === String(boardId) ? `${color.active} ${color.activeText} border-transparent` : `${color.bg} ${color.text} ${color.border} hover:opacity-80`}`}
                                 >
-                                    {boardName} <span className={`text-xs px-1.5 py-0.5 rounded-full ${String(searchFilterBoardId) === String(boardId) ? 'bg-white/20' : 'bg-white/50'}`}>{count}</span>
+                                    {boardName} <span className={`text-xs px-1.5 py-0.5 rounded-full ${String(searchFilterBoardId) === String(boardId) ? 'bg-white/20' : 'bg-white/30'}`}>{count}</span>
                                 </button>
                             );
                         })}
@@ -1695,6 +1689,7 @@ const InternalBoard = () => {
                                         </td>
                                         <td className="py-2 px-3">
                                             <div className="flex items-center gap-1.5">
+                                                {/* [수정] 배경색은 진하게, 글씨는 흰색으로 통일 */}
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${color.bg} ${color.text} ${color.border}`}>
                                                     {post.category}
                                                 </span>
