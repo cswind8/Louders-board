@@ -7,15 +7,15 @@ import {
   Eye, Calendar, UserCircle, ArrowLeft, Edit, ArrowUp, ArrowDown, CheckSquare, AlertCircle, 
   ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Sparkles, Loader2,
   Heading1, Heading2, Heading3, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
-  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal
+  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal, Eraser
 } from 'lucide-react';
 
 // [중요] Firebase 관련 import
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, 
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc,
   getDocs, query, orderBy, writeBatch, increment, limit, startAfter, 
-  where, getCountFromServer
+  where, getCountFromServer, onSnapshot, getDoc, arrayUnion, arrayRemove
 } from "firebase/firestore";
 
 // 선생님의 Firebase 설정값
@@ -34,16 +34,57 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v38_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v45_'; 
+
+// 기본 카테고리 구조 (초기화용)
+const DEFAULT_CATEGORIES = [
+  {
+    id: 'cat_my',
+    name: '마이 메뉴',
+    isExpanded: true,
+    boards: [
+      { id: 'bookmark', name: '북마크(보관함)', type: 'system' }
+    ]
+  },
+  {
+    id: 'cat_factory',
+    name: '공장 게시판',
+    isExpanded: true,
+    defaultContent: '[생산/출고 보고]\n- 일자: \n- 품목: \n- 수량: \n- 특이사항: ',
+    boards: [
+      { id: 11, name: '공장출고', type: 'normal' },
+      { id: 12, name: '민수매출', type: 'normal' },
+      { id: 13, name: '조달매출', type: 'normal' },
+      { id: 14, name: 'OEM매출', type: 'normal' },
+      { id: 15, name: '공장생산', type: 'normal' },
+      { id: 16, name: '샘플/불량 출고', type: 'normal' }
+    ]
+  },
+  {
+    id: 'cat_order',
+    name: '발주서관련 업무',
+    isExpanded: true,
+    defaultContent: '[발주/입금 현황]\n- 거래처명: \n- 발주금액: \n- 입금예정일: ',
+    boards: [
+      { id: 21, name: '매입/매출/입금현황', type: 'normal' },
+      { id: 22, name: '발주서 현황', type: 'normal' }
+    ]
+  }
+];
+
+// 기본 사용자 목록 (초기화용)
+const DEFAULT_USERS = [
+    { id: 1, name: '관리자', userId: 'admin', password: '0802', dept: '시스템 운영팀', position: '관리자' },
+    { id: 2, name: '김철수', userId: 'kimcs', password: 'user1234', dept: '생산관리팀', position: '대리' },
+    { id: 3, name: '이영희', userId: 'leeyh', password: 'user5678', dept: '영업팀', position: '사원' },
+];
 
 // ==================================================================================
-// [중요] 보조 함수들을 컴포넌트 외부로 이동 (초기화 오류 방지)
+// [중요] 보조 함수들을 컴포넌트 외부로 이동
 // ==================================================================================
 
-// 텍스트 정규화 함수 (공백 제거)
 const normalizeText = (text) => String(text || '').replace(/\s+/g, '').trim();
 
-// 파일 다운로드 헬퍼 함수
 const downloadFile = (content, fileName, mimeType) => {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -56,13 +97,12 @@ const downloadFile = (content, fileName, mimeType) => {
   URL.revokeObjectURL(url);
 };
 
-// 날짜/HTML 포맷터
 const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
 
 const formatDisplayDate = (full) => { if (!full) return ''; const [d, t] = full.split(' '); return d === getTodayString() ? t : d; };
 
 const stripHtml = (html) => { 
-    if (typeof document === 'undefined') return html || ""; // SSR 안전장치
+    if (typeof document === 'undefined') return html || ""; 
     const tmp = document.createElement("DIV"); 
     tmp.innerHTML = html; 
     return tmp.textContent || tmp.innerText || ""; 
@@ -71,6 +111,39 @@ const stripHtml = (html) => {
 const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof text !== 'string') return String(text); return text.replace(/\r\n/g, "<br/>").replace(/\n/g, "<br/>"); };
 
 const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
+
+// [추가] 게시판 ID 기반 파스텔 톤 색상 생성기
+const getBoardColor = (boardId) => {
+  const colors = [
+    { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200', active: 'bg-red-500', activeText: 'text-white' },
+    { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200', active: 'bg-orange-500', activeText: 'text-white' },
+    { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', active: 'bg-amber-500', activeText: 'text-white' },
+    { bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200', active: 'bg-yellow-500', activeText: 'text-white' },
+    { bg: 'bg-lime-100', text: 'text-lime-700', border: 'border-lime-200', active: 'bg-lime-500', activeText: 'text-white' },
+    { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-200', active: 'bg-green-500', activeText: 'text-white' },
+    { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', active: 'bg-emerald-500', activeText: 'text-white' },
+    { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-200', active: 'bg-teal-500', activeText: 'text-white' },
+    { bg: 'bg-cyan-100', text: 'text-cyan-700', border: 'border-cyan-200', active: 'bg-cyan-500', activeText: 'text-white' },
+    { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-200', active: 'bg-sky-500', activeText: 'text-white' },
+    { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200', active: 'bg-blue-500', activeText: 'text-white' },
+    { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-200', active: 'bg-indigo-500', activeText: 'text-white' },
+    { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-200', active: 'bg-violet-500', activeText: 'text-white' },
+    { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-200', active: 'bg-purple-500', activeText: 'text-white' },
+    { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-200', active: 'bg-fuchsia-500', activeText: 'text-white' },
+    { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-200', active: 'bg-pink-500', activeText: 'text-white' },
+    { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-200', active: 'bg-rose-500', activeText: 'text-white' },
+  ];
+  
+  if (boardId === 'all') return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', active: 'bg-slate-700', activeText: 'text-white' };
+  
+  let hash = 0;
+  const str = String(boardId);
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % colors.length;
+  return colors[index];
+};
 
 
 const InternalBoard = () => {
@@ -92,7 +165,7 @@ const InternalBoard = () => {
   const apiKey = ""; 
 
   const [posts, setPosts] = useState([]);
-  const [lastVisible, setLastVisible] = useState(null); 
+  const [allBoardPosts, setAllBoardPosts] = useState([]); 
   const [hasMore, setHasMore] = useState(true); 
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   const [boardTotalCount, setBoardTotalCount] = useState(0); 
@@ -102,50 +175,13 @@ const InternalBoard = () => {
   
   const [activePage, setActivePage] = useState(1);
   const postsPerPage = 15;
+  const fetchLimit = 50; 
 
   const [isXlsxLoaded, setIsXlsxLoaded] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [categories, setCategories] = useState([
-    {
-      id: 'cat_my',
-      name: '마이 메뉴',
-      isExpanded: true,
-      boards: [
-        { id: 'bookmark', name: '북마크(보관함)', type: 'system' }
-      ]
-    },
-    {
-      id: 'cat_factory',
-      name: '공장 게시판',
-      isExpanded: true,
-      defaultContent: '[생산/출고 보고]\n- 일자: \n- 품목: \n- 수량: \n- 특이사항: ',
-      boards: [
-        { id: 11, name: '공장출고', type: 'normal' },
-        { id: 12, name: '민수매출', type: 'normal' },
-        { id: 13, name: '조달매출', type: 'normal' },
-        { id: 14, name: 'OEM매출', type: 'normal' },
-        { id: 15, name: '공장생산', type: 'normal' },
-        { id: 16, name: '샘플/불량 출고', type: 'normal' }
-      ]
-    },
-    {
-      id: 'cat_order',
-      name: '발주서관련 업무',
-      isExpanded: true,
-      defaultContent: '[발주/입금 현황]\n- 거래처명: \n- 발주금액: \n- 입금예정일: ',
-      boards: [
-        { id: 21, name: '매입/매출/입금현황', type: 'normal' },
-        { id: 22, name: '발주서 현황', type: 'normal' }
-      ]
-    }
-  ]);
-
-  const [users, setUsers] = useState([
-    { id: 1, name: '관리자', userId: 'admin', password: '0802', dept: '시스템 운영팀', position: '관리자' },
-    { id: 2, name: '김철수', userId: 'kimcs', password: 'user1234', dept: '생산관리팀', position: '대리' },
-    { id: 3, name: '이영희', userId: 'leeyh', password: 'user5678', dept: '영업팀', position: '사원' },
-  ]);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [users, setUsers] = useState([]);
 
   const [activeBoardId, setActiveBoardId] = useState(11);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -166,13 +202,12 @@ const InternalBoard = () => {
     id: null, docId: null, 
     title: '', content: '', 
     titleColor: 'text-rose-600', 
-    titleSize: 'text-[14pt]', 
+    titleSize: 'text-[12pt]', 
     attachments: [] 
   });
 
   const [commentInput, setCommentInput] = useState('');
   const [showColorPicker, setShowColorPicker] = useState(false);
-  // const [showFontSizePicker, setShowFontSizePicker] = useState(false); // [수정] 폰트 사이즈 피커 삭제
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   const fileInputRef = useRef(null);
@@ -183,6 +218,65 @@ const InternalBoard = () => {
   // ==================================================================================
   // 2. Effects & Helpers
   // ==================================================================================
+
+  useEffect(() => {
+    const settingsDocRef = doc(db, 'settings', 'board_config');
+    const unsubscribe = onSnapshot(settingsDocRef, async (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const data = docSnapshot.data();
+        if (data.categories) {
+          setCategories(data.categories);
+        }
+      } else {
+        let initialCategories = DEFAULT_CATEGORIES;
+        const localData = localStorage.getItem('board_categories');
+        if (localData) {
+          try {
+            initialCategories = JSON.parse(localData);
+          } catch(e) { console.error(e); }
+        }
+        await setDoc(settingsDocRef, { categories: initialCategories });
+        setCategories(initialCategories);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const usersDocRef = doc(db, 'settings', 'users_config');
+    const unsubscribe = onSnapshot(usersDocRef, async (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const data = docSnapshot.data();
+        if (data.list) {
+          setUsers(data.list);
+        }
+      } else {
+        await setDoc(usersDocRef, { list: DEFAULT_USERS });
+        setUsers(DEFAULT_USERS);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const updateCategories = async (newCategories) => {
+    setCategories(newCategories);
+    try {
+        await setDoc(doc(db, 'settings', 'board_config'), { categories: newCategories }, { merge: true });
+    } catch (e) {
+        console.error("Failed to save settings:", e);
+        showAlert("설정 저장에 실패했습니다.");
+    }
+  };
+
+  const updateUsers = async (newList) => {
+    setUsers(newList);
+    try {
+        await setDoc(doc(db, 'settings', 'users_config'), { list: newList }, { merge: true });
+    } catch (e) {
+        console.error(e);
+        showAlert("회원 정보 저장 실패");
+    }
+  };
 
   useEffect(() => {
     if (viewMode === 'write' && contentRef.current) {
@@ -238,7 +332,7 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash') {
         q = query(postsRef, where("isDeleted", "==", true));
     } else if (activeBoardId === 'bookmark') {
-        q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
+        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId), where("isDeleted", "==", false));
     } else {
         q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
     }
@@ -257,7 +351,7 @@ const InternalBoard = () => {
     
     fetchBoardCount();
 
-    const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}`;
+    const cacheKey = `${CACHE_KEY_PREFIX}${activeBoardId}_${currentUser.userId}`; 
 
     if (!forceRefresh) {
         const cachedData = sessionStorage.getItem(cacheKey);
@@ -266,8 +360,8 @@ const InternalBoard = () => {
                 const { posts, timestamp, count } = JSON.parse(cachedData);
                 if (Date.now() - timestamp < 30 * 60 * 1000) {
                     setPosts(posts);
+                    setAllBoardPosts(posts);
                     setBoardTotalCount(count); 
-                    setLastVisible(null);
                     setHasMore(false); 
                     return; 
                 }
@@ -283,39 +377,61 @@ const InternalBoard = () => {
         if (activeBoardId === 'trash') {
              q = query(postsRef, where("isDeleted", "==", true));
         } else if (activeBoardId === 'bookmark') {
-             q = query(postsRef, where("isBookmarked", "==", true), where("isDeleted", "==", false));
+             q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId), where("isDeleted", "==", false));
         } else {
-             q = query(
-                 postsRef, 
-                 where("boardId", "==", Number(activeBoardId)), 
-                 where("isDeleted", "==", false)
-             );
+             q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
         }
         
         const documentSnapshots = await getDocs(q);
-        const loadedPosts = documentSnapshots.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
+        const loadedPosts = documentSnapshots.docs.map(doc => {
+            const data = doc.data();
+            const isBookmarked = data.bookmarkedBy?.includes(currentUser.userId);
+            return { ...data, docId: doc.id, isBookmarked };
+        });
         
-        // 메모리에서 ID 역순(최신순) 정렬
         loadedPosts.sort((a, b) => b.id - a.id);
         
-        setPosts(loadedPosts);
-        setHasMore(false); 
+        setAllBoardPosts(loadedPosts);
+
+        const initialView = loadedPosts.slice(0, fetchLimit);
+        setPosts(initialView);
+        
+        setHasMore(loadedPosts.length > fetchLimit);
         
         sessionStorage.setItem(cacheKey, JSON.stringify({
-            posts: loadedPosts,
+            posts: initialView,
             timestamp: Date.now(),
             count: loadedPosts.length 
         }));
         
     } catch (error) {
         console.error("Error fetching posts:", error);
-        showAlert("데이터 로딩 실패: " + error.message);
+        if (error.code === 'failed-precondition') {
+            showAlert("시스템: 인덱스가 생성 중입니다. 잠시 후 다시 시도해주세요.");
+        } else {
+            showAlert("데이터 로딩 실패: " + error.message);
+        }
     } finally {
         setIsLoadingPosts(false);
     }
   };
 
-  // 검색 결과 계산
+  const fetchMorePosts = async () => {
+    const currentLength = posts.length;
+    const totalLength = allBoardPosts.length;
+
+    if (currentLength >= totalLength) {
+        setHasMore(false);
+        return;
+    }
+
+    setIsLoadingPosts(true);
+    const nextBatch = allBoardPosts.slice(currentLength, currentLength + fetchLimit);
+    setPosts(prev => [...prev, ...nextBatch]);
+    setHasMore(currentLength + nextBatch.length < totalLength);
+    setIsLoadingPosts(false);
+  };
+
   const getSearchResults = () => {
     if (!searchQuery) return [];
     const query = searchQuery.toLowerCase();
@@ -338,13 +454,12 @@ const InternalBoard = () => {
   };
   const currentSearchResults = getFilteredSearchResults();
 
-  // 목록 필터링
   const getFilteredPosts = () => {
       if (viewMode === 'search') return currentSearchResults;
 
       return posts.filter(p => {
           if (activeBoardId === 'trash') return p.isDeleted;
-          if (activeBoardId === 'bookmark') return p.isBookmarked && !p.isDeleted;
+          if (activeBoardId === 'bookmark') return p.isBookmarked && !p.isDeleted; 
           if (activeBoardId && activeBoardId !== 'trash' && activeBoardId !== 'bookmark') return p.boardId == activeBoardId && !p.isDeleted;
           return !p.isDeleted;
       });
@@ -364,17 +479,13 @@ const InternalBoard = () => {
     setCategories(categories.map(c => c.id === id ? { ...c, isExpanded: !c.isExpanded } : c));
   };
 
-  const fetchMorePosts = async () => {
-    return;
-  };
-
   useEffect(() => {
-    fetchInitialPosts(false);
+    fetchInitialPosts(true);
   }, [currentUser, activeBoardId]);
   
   const handleRefresh = () => {
     setActivePage(1);
-    fetchInitialPosts(true); // [수정] 강제 새로고침 (남이 쓴 글 보기 위해 true)
+    fetchInitialPosts(true); 
     showAlert("최신 목록을 불러왔습니다.");
   };
 
@@ -418,7 +529,7 @@ const InternalBoard = () => {
     let content = ''; 
     const ab = categories.flatMap(c => c.boards).find(b => b.id === activeBoardId);
     if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); 
-    setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); 
+    setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[12pt]', attachments: [] }); 
     setViewMode('write'); 
   };
 
@@ -452,7 +563,9 @@ const InternalBoard = () => {
             const newPost = {
                 id: newId, type: 'normal', author: currentUser ? currentUser.name : '관리자', 
                 date: dateString, views: 0, file: writeForm.attachments.length > 0, 
-                isMoved: false, isDeleted: false, isBookmarked: false, comments: [], ...postData
+                isMoved: false, isDeleted: false, 
+                bookmarkedBy: [], 
+                comments: [], ...postData
             };
             
             const docRef = await addDoc(collection(db, "posts"), newPost);
@@ -463,7 +576,7 @@ const InternalBoard = () => {
         }
         
         localStorage.removeItem('internalBoard_temp');
-        setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] });
+        setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[12pt]', attachments: [] });
     } catch (e) { console.error(e); showAlert("저장 실패: " + String(e.message)); }
   };
   
@@ -473,7 +586,7 @@ const InternalBoard = () => {
         id: selectedPost.id, docId: selectedPost.docId, 
         title: selectedPost.title, content: selectedPost.content, 
         titleColor: selectedPost.titleColor || 'text-slate-900', 
-        titleSize: selectedPost.titleSize || 'text-[14pt]', 
+        titleSize: selectedPost.titleSize || 'text-[12pt]', 
         attachments: selectedPost.attachments || [] 
     }); 
     setViewMode('write'); 
@@ -500,21 +613,53 @@ const InternalBoard = () => {
     }
   };
 
-  // [중요] 에디터 툴바 클릭 시 포커스 유지
   const handleToolbarAction = (act, val, e) => { 
-      if (e) e.preventDefault(); // 버튼 클릭 시 에디터 포커스 잃지 않도록 방지
-      // if (act === 'customFontSize') { applyFontSize(val); setShowFontSizePicker(false); } // [수정] 폰트피커 삭제됨
+      if (e) e.preventDefault(); 
       if (act === 'formatBlock') applyFormatBlock(val);
       else document.execCommand(act, false, val); 
       
-      // 내용 업데이트
       if(contentRef.current) {
           setWriteForm(p => ({...p, content: contentRef.current.innerHTML})); 
       }
   };
+
+  const handleResetStyles = () => {
+    if (!contentRef.current) return;
+
+    const cleanNode = (node) => {
+        if (node.nodeType !== 1) return; 
+
+        node.removeAttribute('style');
+        node.removeAttribute('class');
+        node.removeAttribute('color');
+        node.removeAttribute('face');
+        node.removeAttribute('size');
+
+        Array.from(node.childNodes).forEach(cleanNode);
+
+        const unwrapTags = ['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SPAN', 'FONT', 'SMALL', 'BIG', 'MARK', 'CODE'];
+        const headingTags = ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE'];
+
+        if (unwrapTags.includes(node.tagName)) {
+            const parent = node.parentNode;
+            while (node.firstChild) {
+                parent.insertBefore(node.firstChild, node);
+            }
+            parent.removeChild(node);
+        } else if (headingTags.includes(node.tagName)) {
+            const p = document.createElement('p');
+            p.innerHTML = node.innerHTML;
+            node.parentNode.replaceChild(p, node);
+        }
+    };
+
+    Array.from(contentRef.current.children).forEach(cleanNode);
+    
+    setWriteForm(prev => ({...prev, content: contentRef.current.innerHTML}));
+    showAlert("모든 서식(제목, 굵게, 색상 등)을 초기화했습니다.");
+  };
   
   const applyFormatBlock = (tag) => document.execCommand('formatBlock', false, tag);
-  // [수정] applyFontSize는 삭제됨 (버튼식으로 대체되어 formatBlock 사용)
   
   const titleColors = [{ name: 'Red', class: 'text-rose-600', bg: 'bg-rose-600' }, { name: 'Black', class: 'text-slate-900', bg: 'bg-slate-900' }, { name: 'Blue', class: 'text-indigo-600', bg: 'bg-indigo-600' }, { name: 'Green', class: 'text-emerald-600', bg: 'bg-emerald-600' }, { name: 'Amber', class: 'text-amber-600', bg: 'bg-amber-600' }, { name: 'Purple', class: 'text-purple-600', bg: 'bg-purple-600' }];
   
@@ -523,7 +668,6 @@ const InternalBoard = () => {
   const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
   const handleConfirmAction = () => { if (modalConfig.onConfirm) modalConfig.onConfirm(); closeModal(); };
 
-  // [복구] 전체 검색 (게시판 구분 없이)
   const handleGlobalSearch = async () => { 
       if(!searchInput.trim()) {
           showAlert("검색어를 입력해주세요.");
@@ -574,9 +718,8 @@ const InternalBoard = () => {
           setViewMode('list'); 
           setSelectedPost(null); 
           setSelectedIds([]); 
-          setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[14pt]', attachments: [] }); 
-          // 목록 복귀 시 데이터 갱신
-          fetchInitialPosts(false);
+          setWriteForm({ id: null, docId: null, title: '', content: '', titleColor: 'text-rose-600', titleSize: 'text-[12pt]', attachments: [] }); 
+          fetchInitialPosts(true);
       }
   };
 
@@ -762,7 +905,9 @@ const InternalBoard = () => {
   const handleAddCategory = () => {
     if (!newCategoryName.trim()) return;
     const newCat = { id: `cat_${Date.now()}`, name: newCategoryName, isExpanded: true, boards: [] };
-    setCategories([...categories, newCat]);
+    
+    const newCategories = [...categories, newCat];
+    updateCategories(newCategories);
     setNewCategoryName('');
   };
 
@@ -771,24 +916,32 @@ const InternalBoard = () => {
     if (!targetCat) return;
     if (targetCat.boards.length > 0) { showAlert("게시판이 포함된 카테고리는 삭제할 수 없습니다."); return; }
     if (categories.length <= 1) { showAlert("최소 하나의 카테고리는 존재해야 합니다."); return; }
-    setCategories(categories.filter(c => c.id !== catId));
+    
+    const newCategories = categories.filter(c => c.id !== catId);
+    updateCategories(newCategories);
   };
 
   const handleAddBoardToCategory = () => {
     if (!newBoardInput.categoryId || !newBoardInput.name.trim()) { showAlert("카테고리를 선택하고 게시판 이름을 입력해주세요."); return; }
-    setCategories(categories.map(cat => {
+    
+    const newCategories = categories.map(cat => {
       if (cat.id === newBoardInput.categoryId) {
         return { ...cat, boards: [...cat.boards, { id: Date.now(), name: newBoardInput.name, type: 'normal', defaultContent: '' }] };
       }
       return cat;
-    }));
+    });
+    
+    updateCategories(newCategories);
     setNewBoardInput({ categoryId: '', name: '' });
   };
 
   const handleDeleteBoard = (boardId) => {
     const totalBoards = categories.reduce((acc, cat) => acc + cat.boards.length, 0);
     if (totalBoards <= 1) { showAlert("최소 하나의 게시판은 존재해야 합니다."); return; }
-    setCategories(categories.map(cat => ({ ...cat, boards: cat.boards.filter(b => b.id !== boardId) })));
+    
+    const newCategories = categories.map(cat => ({ ...cat, boards: cat.boards.filter(b => b.id !== boardId) }));
+    updateCategories(newCategories);
+    
     if (activeBoardId === boardId) {
       const firstValidBoard = categories.find(c => c.boards.length > 0)?.boards[0];
       if (firstValidBoard) setActiveBoardId(firstValidBoard.id);
@@ -801,18 +954,22 @@ const InternalBoard = () => {
 
   const saveEditing = () => {
     if (!editingItem || !editingItem.name.trim()) return;
+    let newCategories;
+    
     if (editingItem.type === 'category') {
-      setCategories(categories.map(cat => 
+      newCategories = categories.map(cat => 
         cat.id === editingItem.id ? { ...cat, name: editingItem.name } : cat
-      ));
+      );
     } else if (editingItem.type === 'board') {
-      setCategories(categories.map(cat => ({
+      newCategories = categories.map(cat => ({
         ...cat,
         boards: cat.boards.map(b => 
           b.id === editingItem.id ? { ...b, name: editingItem.name, defaultContent: editingItem.defaultContent } : b
         )
-      })));
+      }));
     }
+    
+    if (newCategories) updateCategories(newCategories);
     setEditingItem(null);
   };
 
@@ -881,7 +1038,7 @@ const InternalBoard = () => {
                     file: post.file || false,
                     isMoved: false,
                     isDeleted: false,
-                    isBookmarked: false,
+                    bookmarkedBy: [], // 리셋
                     comments: []
                 };
                 
@@ -1071,16 +1228,24 @@ const InternalBoard = () => {
                 views: row[viewsKey] || 0,
                 content: row[contentKey] ? textToHtmlWithLineBreaks(row[contentKey]) : '', 
                 type: 'normal', file: false, attachments: [], 
-                titleColor: 'text-slate-900', titleSize: 'text-[14pt]', 
-                isMoved: false, isDeleted: false, isBookmarked: false, comments: []
+                titleColor: 'text-slate-900', titleSize: 'text-[12pt]', 
+                isMoved: false, isDeleted: false, 
+                bookmarkedBy: [], 
+                comments: []
             };
         });
         
-        let statsMsg = "엑셀 파일 분석 결과:\n\n";
+        // [수정] 미리보기 메시지 개선 (줄바꿈 및 포맷팅)
+        let statsMsg = "📊 [엑셀 파일 분석 결과]\n\n";
         for (const [cat, count] of Object.entries(importStats)) {
-            statsMsg += `- ${cat}: ${count}건\n`;
+            statsMsg += `• ${cat}: ${count}건\n`;
         }
-        statsMsg += `\n총 ${parsedPosts.length}건의 데이터를 발견했습니다.\n\n[주의] '확인'을 누르면 기존 게시글을 *모두 삭제*하고 위 데이터로 새로 작성합니다. 진행하시겠습니까?`;
+        statsMsg += `\n----------------------------\n`;
+        statsMsg += `📌 총 발견 데이터: ${parsedPosts.length}건\n\n`;
+        statsMsg += `⚠️ [주의] '확인'을 누르면:\n`;
+        statsMsg += `1. 기존 게시글이 모두 삭제됩니다.\n`;
+        statsMsg += `2. 위 데이터로 새로 작성됩니다.\n\n`;
+        statsMsg += `진행하시겠습니까?`;
 
         showConfirm(statsMsg, () => {
              saveImportedDataToDB(parsedPosts);
@@ -1105,11 +1270,17 @@ const InternalBoard = () => {
                     importStats[cat] = (importStats[cat] || 0) + 1;
                 });
 
-                let statsMsg = "JSON 파일 분석 결과:\n\n";
+                // [수정] JSON 미리보기 메시지 개선
+                let statsMsg = "📄 [JSON 파일 분석 결과]\n\n";
                 for (const [cat, count] of Object.entries(importStats)) {
-                    statsMsg += `- ${cat}: ${count}건\n`;
+                    statsMsg += `• ${cat}: ${count}건\n`;
                 }
-                statsMsg += `\n총 ${importedData.length}건의 데이터를 발견했습니다.\n\n[주의] '확인'을 누르면 기존 게시글을 *모두 삭제*하고 덮어씁니다. 진행하시겠습니까?`;
+                statsMsg += `\n----------------------------\n`;
+                statsMsg += `📌 총 발견 데이터: ${importedData.length}건\n\n`;
+                statsMsg += `⚠️ [주의] '확인'을 누르면:\n`;
+                statsMsg += `1. 기존 게시글이 모두 삭제됩니다.\n`;
+                statsMsg += `2. 파일 내용으로 덮어씌워집니다.\n\n`;
+                statsMsg += `진행하시겠습니까?`;
 
                 showConfirm(statsMsg, () => { 
                     saveImportedDataToDB(importedData);
@@ -1185,7 +1356,13 @@ const InternalBoard = () => {
           .wysiwyg-content h2 { font-size: 1.3em; font-weight: bold; margin: 14px 0 8px 0; }
           .wysiwyg-content table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
           .wysiwyg-content th, .wysiwyg-content td { border: 1px solid #e2e8f0; padding: 6px; }
-          @media print { body { padding: 0; font-size: 12px; } .print-controls { display: none !important; } .content-wrapper { margin-top: 0; } }
+          @media print { 
+            body { padding: 0; font-size: 13px; } /* 12px -> 13px */
+            .print-controls { display: none !important; } 
+            .content-wrapper { margin-top: 0; } 
+            /* [수정] 출력 시 제목 1.2배 확대 (1.5배 -> 1.2배 조정) */
+            h1 { font-size: 1.8em !important; }
+          }
         </style>
       </head>
       <body class="bg-white text-slate-800">
@@ -1223,7 +1400,8 @@ const InternalBoard = () => {
                 <div className="p-8 text-center">
                 <div className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center mb-4 ${modalConfig.type === 'confirm' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}><AlertCircle size={28} /></div>
                 <h3 className="text-xl font-bold text-slate-900 mb-2">{modalConfig.type === 'confirm' ? '확인해 주세요' : '알림'}</h3>
-                <p className="text-sm text-slate-500 leading-relaxed font-medium">{modalConfig.message}</p>
+                {/* [수정] 줄바꿈(whitespace-pre-wrap) 적용 */}
+                <p className="text-sm text-slate-500 leading-relaxed font-medium whitespace-pre-wrap">{modalConfig.message}</p>
                 </div>
                 <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
                 {modalConfig.type === 'confirm' && <button onClick={closeModal} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-50 transition-colors shadow-sm">취소</button>}
@@ -1259,7 +1437,7 @@ const InternalBoard = () => {
             <div key={cat.id} className="mb-6">
               <button onClick={() => toggleCategory(cat.id)} className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-slate-400 hover:text-white uppercase tracking-wider mb-2"><span>{cat.name}</span>{cat.isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
               {cat.isExpanded && <div className="space-y-1">{cat.boards.map(board => (<button key={board.id} onClick={() => { 
-                  // 1. 상태 초기화 (검색 잔상 제거)
+                  // 1. 상태 초기화
                   setPosts([]); 
                   setSearchInput(''); 
                   setSearchQuery(''); 
@@ -1268,10 +1446,10 @@ const InternalBoard = () => {
                   setActivePage(1); 
                   setIsMobileMenuOpen(false); 
                   
-                  // 2. 게시판 변경 -> useEffect 트리거
+                  // 2. 게시판 변경
                   setActiveBoardId(board.id); 
                   
-                  // [핵심] 같은 게시판을 누르더라도, 검색 모드 등에서 돌아올 때를 대비해 강제 리로드 필요
+                  // [핵심] 같은 게시판 재클릭 시 강제 리로드
                   if (activeBoardId === board.id) {
                       fetchInitialPosts(true);
                   }
@@ -1338,7 +1516,6 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            {/* 게시판별 번호 계산 */}
                             <td className="text-center text-slate-500">
                                 {(boardTotalCount || posts.length) - (activePage - 1) * postsPerPage - idx}
                             </td>
@@ -1361,7 +1538,7 @@ const InternalBoard = () => {
                 </table>
               </div>
 
-              {/* 페이지네이션 */}
+              {/* 페이지네이션 및 더보기 */}
               <div className="p-3 border-t border-slate-200 bg-white flex justify-between items-center">
                  <div className="flex-1"></div> 
                  <div className="flex justify-center items-center gap-1">
@@ -1373,12 +1550,24 @@ const InternalBoard = () => {
                     <button onClick={() => setActivePage(Math.min(totalPages, endPage + 1))} disabled={endPage >= totalPages || totalPages === 0} className="p-1 border rounded disabled:opacity-30"><ChevronRight size={14} /></button>
                     <button onClick={() => setActivePage(totalPages)} disabled={activePage === totalPages || totalPages === 0} className="p-1 border rounded disabled:opacity-30"><ChevronsRight size={14} /></button>
                  </div>
-                 <div className="flex-1 flex justify-end"></div>
+                 {/* [복구] 더 보기 버튼 */}
+                 <div className="flex-1 flex justify-end">
+                    {hasMore && viewMode === 'list' && activeBoardId !== 'trash' && (
+                        <button 
+                            onClick={fetchMorePosts} 
+                            disabled={isLoadingPosts}
+                            className="text-xs font-bold text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
+                        >
+                            {isLoadingPosts ? <Loader2 size={14} className="animate-spin" /> : <MoreHorizontal size={14} />}
+                            이전 글 더 불러오기
+                        </button>
+                    )}
+                 </div>
               </div>
             </div>
           )}
 
-          {/* [검색 결과 화면 - 버튼 필터링 및 리스트 갱신] */}
+          {/* [검색 결과 화면] */}
           {viewMode === 'search' && (
             <div className="space-y-6">
                 <div className="flex flex-col gap-4">
@@ -1392,7 +1581,6 @@ const InternalBoard = () => {
                         </button>
                     </div>
 
-                    {/* [필터 버튼 영역] */}
                     <div className="flex flex-wrap gap-2 pb-2 border-b border-slate-200">
                         <button 
                             onClick={() => setSearchFilterBoardId('all')}
@@ -1407,24 +1595,25 @@ const InternalBoard = () => {
                             if (foundBoard) boardName = foundBoard.name;
                             if (boardId === 'bookmark') boardName = '북마크';
                             
+                            // [수정] 게시판별 파스텔 톤 색상 적용
+                            const color = getBoardColor(boardId);
+                            
                             return (
                                 <button 
                                     key={boardId}
                                     onClick={() => setSearchFilterBoardId(boardId)}
-                                    className={`px-4 py-2 rounded-full text-sm font-bold transition-all shadow-sm flex items-center gap-2 border ${String(searchFilterBoardId) === String(boardId) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                    className={`px-4 py-2 rounded-full text-sm font-bold transition-all shadow-sm flex items-center gap-2 border ${String(searchFilterBoardId) === String(boardId) ? `${color.active} ${color.activeText} border-transparent` : `${color.bg} ${color.text} ${color.border} hover:opacity-80`}`}
                                 >
-                                    {boardName} <span className={`text-xs px-1.5 py-0.5 rounded-full ${String(searchFilterBoardId) === String(boardId) ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>{count}</span>
+                                    {boardName} <span className={`text-xs px-1.5 py-0.5 rounded-full ${String(searchFilterBoardId) === String(boardId) ? 'bg-white/20' : 'bg-white/50'}`}>{count}</span>
                                 </button>
                             );
                         })}
                     </div>
                 </div>
 
-                {/* [검색 결과 리스트 - 일반 리스트와 동일한 UI 적용] */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="overflow-x-auto">
                         <table className="w-full min-w-[800px] table-fixed text-sm">
-                            {/* [수정] py-3 -> py-2로 줄여서 시인성 확보 */}
                             <colgroup><col className="w-10"/><col className="w-16"/><col/><col className="w-12"/><col className="w-24"/><col className="w-32"/><col className="w-16"/></colgroup>
                             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                                 <tr>
@@ -1439,25 +1628,21 @@ const InternalBoard = () => {
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {currentSearchResults.length > 0 ? currentSearchResults.map((post, idx) => {
-                                    // [수정] 검색 시 실제 번호 계산 (전체 posts에서의 역순 인덱스)
-                                    // posts는 현재 최신순(역순)으로 정렬되어 있으므로, 전체 길이에서 현재 인덱스를 빼는 방식이 아니라
-                                    // 전체 갯수에서 해당 포스트의 인덱스를 빼는 것이 논리적입니다.
-                                    // posts[0] = 가장 최신글 (번호: N)
-                                    // posts[N-1] = 가장 옛날글 (번호: 1)
-                                    // 따라서 번호 = totalDocs - index
                                     const realNumber = posts.length - posts.findIndex(p => p.docId === post.docId);
+                                    // [수정] 리스트 아이콘(뱃지) 색상 적용
+                                    const color = getBoardColor(post.boardId);
                                     
                                     return (
                                     <tr key={post.docId} onClick={() => handlePostClick(post)} className="border-b hover:bg-slate-50 cursor-pointer text-sm">
-                                        <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); /*검색에선 선택X*/}}>
-                                            {/* 검색 결과에선 체크박스 비활성 */}
-                                        </td>
+                                        <td className="py-2 text-center" onClick={(e) => {e.stopPropagation();}}></td>
                                         <td className="text-center py-2 text-slate-500">
                                             {realNumber}
                                         </td>
                                         <td className="py-2 px-3">
                                             <div className="flex items-center gap-1.5">
-                                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">{post.category}</span>
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${color.bg} ${color.text} ${color.border}`}>
+                                                    {post.category}
+                                                </span>
                                                 <span className={`font-medium line-clamp-1 ${post.titleColor}`}>{post.title}</span>
                                             </div>
                                         </td>
@@ -1532,18 +1717,21 @@ const InternalBoard = () => {
                   <label className="block text-sm font-bold text-slate-700 mb-2">내용</label>
                   <div className="border border-slate-300 rounded-xl overflow-hidden transition-all focus-within:ring-2 focus-within:ring-indigo-500 h-[500px] flex flex-col shadow-sm">
                     <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex items-center gap-1.5 flex-shrink-0 flex-wrap relative">
+                        {/* [수정] 지우개 버튼 텍스트 변경: 서식지우개 -> 서식 */}
+                        <button 
+                            onMouseDown={(e) => { e.preventDefault(); handleResetStyles(); }} 
+                            className="flex items-center gap-1 px-2 py-1.5 bg-white border border-slate-300 rounded hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-slate-600 text-xs font-bold transition-colors mr-2" 
+                            title="모든 서식 초기화"
+                        >
+                            <Eraser size={14} /> 서식
+                        </button>
+                        <div className="w-px h-4 bg-slate-300 mx-1"></div>
+
                         <div className="flex items-center gap-0.5 border-r border-slate-200 pr-1.5 mr-1.5">
                              <button onMouseDown={(e) => handleToolbarAction('undo', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="실행 취소"><RotateCcw size={14} /></button>
                              <button onMouseDown={(e) => handleToolbarAction('redo', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="다시 실행"><RotateCw size={14} /></button>
                         </div>
-
-                        <div className="flex items-center gap-0.5 border-r border-slate-200 pr-1.5 mr-1.5">
-                            {/* [수정] 폰트 크기 선택 대신 헤딩 버튼 추가 */}
-                            <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H1', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 1"><Heading1 size={16} /></button>
-                            <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H2', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 2"><Heading2 size={16} /></button>
-                            <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'H3', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="제목 3"><Heading3 size={16} /></button>
-                            <button onMouseDown={(e) => handleToolbarAction('formatBlock', 'P', e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600 text-xs font-bold" title="본문">P</button>
-                        </div>
+                        
                       <button onMouseDown={(e) => handleToolbarAction('bold', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="굵게"><Bold size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('italic', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="기울임"><Italic size={16} /></button>
                       <button onMouseDown={(e) => handleToolbarAction('underline', null, e)} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600" title="밑줄"><Underline size={16} /></button>
@@ -1591,7 +1779,7 @@ const InternalBoard = () => {
                       ref={contentRef}
                       contentEditable
                       suppressContentEditableWarning
-                      className="wysiwyg-content w-full flex-1 px-6 py-5 border-none focus:ring-0 text-base leading-relaxed overflow-y-auto bg-white font-normal text-slate-700 outline-none list-disc list-inside"
+                      className="wysiwyg-content w-full flex-1 px-6 py-5 border-none focus:ring-0 text-sm leading-relaxed overflow-y-auto bg-white font-normal text-slate-700 outline-none list-disc list-inside"
                       onInput={(e) => setWriteForm({ ...writeForm, content: e.currentTarget.innerHTML })}
                     />
                     <div className="px-4 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50 flex justify-end">글자 수: {stripHtml(writeForm.content).length}자</div>
@@ -1670,7 +1858,8 @@ const InternalBoard = () => {
               </div>
 
               <div className="p-8 md:p-10 bg-white min-h-[500px]">
-                <div className="wysiwyg-content text-slate-800 text-lg px-2" dangerouslySetInnerHTML={{ __html: selectedPost.content || "본문 내용이 없습니다." }} />
+                {/* [수정] 상세보기 폰트 크기를 text-sm (14px)로 변경 */}
+                <div className="wysiwyg-content text-slate-800 text-sm px-2" dangerouslySetInnerHTML={{ __html: selectedPost.content || "본문 내용이 없습니다." }} />
                 
                 {selectedPost.attachments && selectedPost.attachments.length > 0 && (
                   <div className="mt-16 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden print-hidden">
@@ -1963,7 +2152,8 @@ const InternalBoard = () => {
             <div className="p-8 text-center">
               <div className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center mb-4 ${modalConfig.type === 'confirm' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}><AlertCircle size={28} /></div>
               <h3 className="text-xl font-bold text-slate-900 mb-2">{modalConfig.type === 'confirm' ? '확인해 주세요' : '알림'}</h3>
-              <p className="text-sm text-slate-500 leading-relaxed font-medium">{modalConfig.message}</p>
+              {/* [수정] 줄바꿈(whitespace-pre-wrap) 적용 */}
+              <p className="text-sm text-slate-500 leading-relaxed font-medium whitespace-pre-wrap">{modalConfig.message}</p>
             </div>
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
               {modalConfig.type === 'confirm' && <button onClick={closeModal} className="flex-1 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-50 transition-colors shadow-sm">취소</button>}
