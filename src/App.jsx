@@ -7,7 +7,7 @@ import {
   Eye, Calendar, UserCircle, ArrowLeft, Edit, ArrowUp, ArrowDown, CheckSquare, AlertCircle, 
   ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Sparkles, Loader2,
   Heading1, Heading2, Heading3, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
-  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal, Eraser
+  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal, Eraser, Check
 } from 'lucide-react';
 
 // [중요] Firebase 관련 import
@@ -34,7 +34,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v45_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v46_'; 
 
 // 기본 카테고리 구조 (초기화용)
 const DEFAULT_CATEGORIES = [
@@ -112,7 +112,6 @@ const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof te
 
 const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
-// [추가] 게시판 ID 기반 파스텔 톤 색상 생성기
 const getBoardColor = (boardId) => {
   const colors = [
     { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200', active: 'bg-red-500', activeText: 'text-white' },
@@ -191,7 +190,11 @@ const InternalBoard = () => {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newBoardInput, setNewBoardInput] = useState({ categoryId: '', name: '' });
   const [editingItem, setEditingItem] = useState(null);
+  
+  // [수정] 회원 수정 기능을 위한 상태 추가
+  const [editingUser, setEditingUser] = useState(null); // 수정 중인 사용자 객체
   const [newUser, setNewUser] = useState({ name: '', userId: '', password: '', dept: '', position: '' });
+  
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'alert', message: '', onConfirm: null });
 
   const [searchInput, setSearchInput] = useState(''); 
@@ -332,13 +335,16 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash') {
         q = query(postsRef, where("isDeleted", "==", true));
     } else if (activeBoardId === 'bookmark') {
-        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId), where("isDeleted", "==", false));
+        // [수정] 복합 인덱스 오류 방지를 위해, 메모리 필터링 방식으로 변경할 수 있으나
+        // array-contains 단독 사용은 인덱스 없이도 가능하므로 isDeleted 필터는 메모리에서 처리
+        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId));
     } else {
         q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
     }
 
     try {
         const snapshot = await getCountFromServer(q);
+        // bookmark인 경우 isDeleted 체크가 쿼리에 없으므로 정확한 카운트는 아닐 수 있음 (허용)
         setBoardTotalCount(snapshot.data().count);
     } catch (e) {
         console.error("Count fetch error:", e);
@@ -377,17 +383,24 @@ const InternalBoard = () => {
         if (activeBoardId === 'trash') {
              q = query(postsRef, where("isDeleted", "==", true));
         } else if (activeBoardId === 'bookmark') {
-             q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId), where("isDeleted", "==", false));
+             // [수정] 인덱스 오류 해결을 위해 'isDeleted' 조건 제거 (array-contains와 복합 조건 시 인덱스 필요)
+             // 삭제된 글은 아래 map/filter 과정에서 걸러냅니다.
+             q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId));
         } else {
              q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
         }
         
         const documentSnapshots = await getDocs(q);
-        const loadedPosts = documentSnapshots.docs.map(doc => {
+        let loadedPosts = documentSnapshots.docs.map(doc => {
             const data = doc.data();
             const isBookmarked = data.bookmarkedBy?.includes(currentUser.userId);
             return { ...data, docId: doc.id, isBookmarked };
         });
+
+        // [추가] 북마크 게시판인 경우 삭제된 글 메모리에서 필터링
+        if (activeBoardId === 'bookmark') {
+            loadedPosts = loadedPosts.filter(p => !p.isDeleted);
+        }
         
         loadedPosts.sort((a, b) => b.id - a.id);
         
@@ -407,7 +420,7 @@ const InternalBoard = () => {
     } catch (error) {
         console.error("Error fetching posts:", error);
         if (error.code === 'failed-precondition') {
-            showAlert("시스템: 인덱스가 생성 중입니다. 잠시 후 다시 시도해주세요.");
+            showAlert("시스템: 인덱스가 필요합니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
         } else {
             showAlert("데이터 로딩 실패: " + error.message);
         }
@@ -867,16 +880,24 @@ const InternalBoard = () => {
   };
 
   const handleToggleBookmark = async (post) => {
+    if (!currentUser) return;
     try { 
         const newStatus = !post.isBookmarked;
-        await updateDoc(doc(db, "posts", post.docId), { isBookmarked: newStatus }); 
-        setPosts(posts.map(p => p.docId === post.docId ? { ...p, isBookmarked: newStatus } : p));
         
+        setPosts(posts.map(p => p.docId === post.docId ? { ...p, isBookmarked: newStatus } : p));
         if (selectedPost && selectedPost.docId === post.docId) {
              setSelectedPost({ ...selectedPost, isBookmarked: newStatus });
         }
+
+        const postRef = doc(db, "posts", post.docId);
+        if (newStatus) {
+            await updateDoc(postRef, { bookmarkedBy: arrayUnion(currentUser.userId) });
+        } else {
+            await updateDoc(postRef, { bookmarkedBy: arrayRemove(currentUser.userId) });
+        }
+        
         clearCache();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Bookmark error", e); }
   };
 
   const handleAddComment = async () => {
@@ -973,13 +994,46 @@ const InternalBoard = () => {
     setEditingItem(null);
   };
 
-  const handleAddUser = () => {
+  // [수정] 사용자 추가/수정 통합 핸들러
+  const handleSaveUser = () => {
     if (!newUser.name || !newUser.userId || !newUser.password) {
       showAlert("이름, 아이디, 비밀번호는 필수입니다.");
       return;
     }
-    setUsers([...users, { id: Date.now(), ...newUser }]);
+
+    let newUsersList;
+    if (editingUser) {
+        // 수정 모드
+        newUsersList = users.map(u => u.id === editingUser.id ? { ...u, ...newUser } : u);
+    } else {
+        // 추가 모드
+        // 아이디 중복 체크
+        if (users.some(u => u.userId === newUser.userId)) {
+            showAlert("이미 존재하는 아이디입니다.");
+            return;
+        }
+        newUsersList = [...users, { id: Date.now(), ...newUser }];
+    }
+    
+    updateUsers(newUsersList);
     setNewUser({ name: '', userId: '', password: '', dept: '', position: '' });
+    setEditingUser(null); // 수정 모드 종료
+  };
+
+  const handleEditUserClick = (user) => {
+    setEditingUser(user);
+    setNewUser({ 
+        name: user.name, 
+        userId: user.userId, 
+        password: user.password, 
+        dept: user.dept, 
+        position: user.position 
+    });
+  };
+
+  const handleCancelUserEdit = () => {
+      setEditingUser(null);
+      setNewUser({ name: '', userId: '', password: '', dept: '', position: '' });
   };
 
   const handleDeleteUser = (userId) => {
@@ -988,7 +1042,8 @@ const InternalBoard = () => {
       return;
     }
     showConfirm("정말 이 사용자를 삭제하시겠습니까?", () => {
-      setUsers(prevUsers => prevUsers.filter(u => u.id !== userId));
+      const newUsersList = users.filter(u => u.id !== userId);
+      updateUsers(newUsersList);
     });
   };
 
@@ -1235,7 +1290,6 @@ const InternalBoard = () => {
             };
         });
         
-        // [수정] 미리보기 메시지 개선 (줄바꿈 및 포맷팅)
         let statsMsg = "📊 [엑셀 파일 분석 결과]\n\n";
         for (const [cat, count] of Object.entries(importStats)) {
             statsMsg += `• ${cat}: ${count}건\n`;
@@ -1270,7 +1324,6 @@ const InternalBoard = () => {
                     importStats[cat] = (importStats[cat] || 0) + 1;
                 });
 
-                // [수정] JSON 미리보기 메시지 개선
                 let statsMsg = "📄 [JSON 파일 분석 결과]\n\n";
                 for (const [cat, count] of Object.entries(importStats)) {
                     statsMsg += `• ${cat}: ${count}건\n`;
@@ -1357,11 +1410,13 @@ const InternalBoard = () => {
           .wysiwyg-content table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
           .wysiwyg-content th, .wysiwyg-content td { border: 1px solid #e2e8f0; padding: 6px; }
           @media print { 
-            body { padding: 0; font-size: 13px; } /* 12px -> 13px */
+            body { padding: 0; font-size: 13px; } 
             .print-controls { display: none !important; } 
             .content-wrapper { margin-top: 0; } 
             /* [수정] 출력 시 제목 1.2배 확대 (1.5배 -> 1.2배 조정) */
             h1 { font-size: 1.8em !important; }
+            /* [수정] 본문 폰트 크기 13px로 조정 */
+            .wysiwyg-content { font-size: 13px !important; }
           }
         </style>
       </head>
@@ -2017,14 +2072,27 @@ const InternalBoard = () => {
               ) : settingsTab === 'user' ? (
                   <div className="space-y-6">
                       <div className="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
-                          <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Users size={18} className="text-blue-500" />사용자 추가</h4>
+                          {/* [수정] 제목 및 버튼 동적 변경 */}
+                          <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                              {editingUser ? <Edit size={18} className="text-blue-500" /> : <Users size={18} className="text-blue-500" />}
+                              {editingUser ? '사용자 정보 수정' : '사용자 추가'}
+                          </h4>
                           <div className="grid grid-cols-2 gap-3">
                               <input type="text" placeholder="이름" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
-                              <input type="text" placeholder="아이디" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.userId} onChange={e => setNewUser({...newUser, userId: e.target.value})} />
-                              <input type="password" placeholder="비밀번호" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
+                              <input type="text" placeholder="아이디" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.userId} onChange={e => setNewUser({...newUser, userId: e.target.value})} disabled={!!editingUser} />
+                              <input type="text" placeholder="비밀번호" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
                               <input type="text" placeholder="부서" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.dept} onChange={e => setNewUser({...newUser, dept: e.target.value})} />
                               <input type="text" placeholder="직급" className="px-3 py-2 border border-slate-200 rounded text-sm" value={newUser.position} onChange={e => setNewUser({...newUser, position: e.target.value})} />
-                              <button onClick={handleAddUser} className="bg-blue-600 text-white rounded text-sm font-bold">추가</button>
+                              
+                              {/* [수정] 버튼 그룹 (수정 시 취소 버튼 표시) */}
+                              <div className="flex gap-2">
+                                  {editingUser && (
+                                      <button onClick={handleCancelUserEdit} className="flex-1 bg-slate-200 text-slate-700 rounded text-sm font-bold hover:bg-slate-300">취소</button>
+                                  )}
+                                  <button onClick={handleSaveUser} className={`flex-1 text-white rounded text-sm font-bold ${editingUser ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                                      {editingUser ? '수정 저장' : '추가'}
+                                  </button>
+                              </div>
                           </div>
                       </div>
                       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -2039,12 +2107,14 @@ const InternalBoard = () => {
                               </thead>
                               <tbody className="divide-y divide-slate-100">
                                   {users.map(user => (
-                                      <tr key={user.id} className="hover:bg-slate-50">
+                                      <tr key={user.id} className={`hover:bg-slate-50 ${editingUser?.id === user.id ? 'bg-indigo-50' : ''}`}>
                                           <td className="px-4 py-3 font-medium text-slate-700">{user.name}</td>
                                           <td className="px-4 py-3 text-slate-500">{user.userId}</td>
                                           <td className="px-4 py-3 text-slate-500">{user.dept} {user.position}</td>
-                                          <td className="px-4 py-3 text-center">
-                                              <button onClick={() => handleDeleteUser(user.id)} className="text-rose-500 hover:bg-rose-50 p-1.5 rounded"><Trash2 size={14} /></button>
+                                          <td className="px-4 py-3 text-center flex items-center justify-center gap-2">
+                                              {/* [추가] 수정 버튼 */}
+                                              <button onClick={() => handleEditUserClick(user)} className="text-indigo-500 hover:bg-indigo-50 p-1.5 rounded" title="수정"><Edit size={14} /></button>
+                                              <button onClick={() => handleDeleteUser(user.id)} className="text-rose-500 hover:bg-rose-50 p-1.5 rounded" title="삭제"><Trash2 size={14} /></button>
                                           </td>
                                       </tr>
                                   ))}
