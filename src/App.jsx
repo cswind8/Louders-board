@@ -1707,7 +1707,7 @@ const InternalBoard = () => {
                 .wysiwyg-content ul { list-style-type: disc; padding-left: 20px; }
                 .wysiwyg-content ol { list-style-type: decimal; padding-left: 20px; }
                 .wysiwyg-content li { margin-bottom: 4px; }
-                .wysiwyg-content p { margin-bottom: 1em; line-height: 1.7; }
+                .wysiwyg-content p { margin: 0; }
                 .wysiwyg-content h1 { font-size: 2em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
                 .wysiwyg-content h2 { font-size: 1.5em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
                 .wysiwyg-content h3 { font-size: 1.25em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
@@ -1844,7 +1844,7 @@ const InternalBoard = () => {
                 .wysiwyg-content ul { list-style-type: disc; padding-left: 20px; }
                 .wysiwyg-content ol { list-style-type: decimal; padding-left: 20px; }
                 .wysiwyg-content li { margin-bottom: 4px; }
-                .wysiwyg-content p { margin-bottom: 1em; line-height: 1.7; }
+                .wysiwyg-content p { margin: 0; }
                 .wysiwyg-content h1 { font-size: 2em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
                 .wysiwyg-content h2 { font-size: 1.5em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
                 .wysiwyg-content h3 { font-size: 1.25em; font-weight: bold; margin-top: 0.5em; margin-bottom: 0.5em; }
