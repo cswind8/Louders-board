@@ -5,9 +5,9 @@ import {
   Settings, Menu, User, Plus, Trash2, LayoutDashboard, MessageSquare, Megaphone, X,
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, Indent, Outdent,
   Eye, Calendar, UserCircle, ArrowLeft, Edit, ArrowUp, ArrowDown, CheckSquare, AlertCircle, 
-  ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Sparkles, Loader2,
+  ChevronDown, ChevronUp, FolderPlus, Folder, RefreshCcw, File, Download, Palette, Type, Loader2,
   Heading1, Heading2, Heading3, Star, MessageCircle, Send, Save, Users, Key, Database, Upload, FileSpreadsheet, Filter, LogOut, Lock,
-  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal, Eraser, Check
+  ChevronsLeft, ChevronsRight, Printer, Strikethrough, RotateCcw, RotateCw, MoreHorizontal, Eraser, Check, ExternalLink
 } from 'lucide-react';
 
 // [중요] Firebase 관련 import
@@ -34,7 +34,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v47_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v49_'; 
 
 // 기본 카테고리 구조 (초기화용)
 const DEFAULT_CATEGORIES = [
@@ -112,45 +112,25 @@ const textToHtmlWithLineBreaks = (text) => { if (!text) return ''; if (typeof te
 
 const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/li>/gi, "\n"); const tmp = document.createElement("DIV"); tmp.innerHTML = t; return (tmp.textContent || tmp.innerText || "").trim(); };
 
-// [수정] 게시판 ID 기반 직관적인(진한) 색상 생성기 (Vivid Colors)
 const getBoardColor = (boardId) => {
-  const colors = [
-    { bg: 'bg-red-600', text: 'text-white', border: 'border-red-700', active: 'bg-red-800', activeText: 'text-white' },
-    { bg: 'bg-orange-600', text: 'text-white', border: 'border-orange-700', active: 'bg-orange-800', activeText: 'text-white' },
-    { bg: 'bg-amber-600', text: 'text-white', border: 'border-amber-700', active: 'bg-amber-800', activeText: 'text-white' },
-    { bg: 'bg-yellow-500', text: 'text-slate-900', border: 'border-yellow-600', active: 'bg-yellow-700', activeText: 'text-white' }, // 가독성 위해 노랑은 검은글씨
-    { bg: 'bg-lime-600', text: 'text-white', border: 'border-lime-700', active: 'bg-lime-800', activeText: 'text-white' },
-    { bg: 'bg-green-600', text: 'text-white', border: 'border-green-700', active: 'bg-green-800', activeText: 'text-white' },
-    { bg: 'bg-emerald-600', text: 'text-white', border: 'border-emerald-700', active: 'bg-emerald-800', activeText: 'text-white' },
-    { bg: 'bg-teal-600', text: 'text-white', border: 'border-teal-700', active: 'bg-teal-800', activeText: 'text-white' },
-    { bg: 'bg-cyan-600', text: 'text-white', border: 'border-cyan-700', active: 'bg-cyan-800', activeText: 'text-white' },
-    { bg: 'bg-sky-600', text: 'text-white', border: 'border-sky-700', active: 'bg-sky-800', activeText: 'text-white' },
-    { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700', active: 'bg-blue-800', activeText: 'text-white' },
-    { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-700', active: 'bg-indigo-800', activeText: 'text-white' },
-    { bg: 'bg-violet-600', text: 'text-white', border: 'border-violet-700', active: 'bg-violet-800', activeText: 'text-white' },
-    { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-700', active: 'bg-purple-800', activeText: 'text-white' },
-    { bg: 'bg-fuchsia-600', text: 'text-white', border: 'border-fuchsia-700', active: 'bg-fuchsia-800', activeText: 'text-white' },
-    { bg: 'bg-pink-600', text: 'text-white', border: 'border-pink-700', active: 'bg-pink-800', activeText: 'text-white' },
-    { bg: 'bg-rose-600', text: 'text-white', border: 'border-rose-700', active: 'bg-rose-800', activeText: 'text-white' },
-  ];
+  const bid = Number(boardId);
   
-  if (boardId === 'all') return { bg: 'bg-slate-700', text: 'text-white', border: 'border-slate-800', active: 'bg-slate-900', activeText: 'text-white' };
-  
-  let hash = 0;
-  const str = String(boardId);
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % colors.length;
-  return colors[index];
+  if (bid === 11) return { bg: 'bg-orange-600', text: 'text-white', border: 'border-orange-700', active: 'bg-orange-800', activeText: 'text-white' };
+  if (bid === 12) return { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700', active: 'bg-blue-800', activeText: 'text-white' };
+  if (bid === 13) return { bg: 'bg-green-600', text: 'text-white', border: 'border-green-700', active: 'bg-green-800', activeText: 'text-white' };
+  if (bid === 14) return { bg: 'bg-slate-500', text: 'text-white', border: 'border-slate-600', active: 'bg-slate-700', activeText: 'text-white' };
+  if (bid === 15) return { bg: 'bg-red-600', text: 'text-white', border: 'border-red-700', active: 'bg-red-800', activeText: 'text-white' };
+  if (bid === 16) return { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-700', active: 'bg-purple-800', activeText: 'text-white' };
+  if (bid >= 20) return { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-700', active: 'bg-indigo-800', activeText: 'text-white' };
+  if (boardId === 'all') return { bg: 'bg-slate-800', text: 'text-white', border: 'border-slate-900', active: 'bg-black', activeText: 'text-white' };
+  if (boardId === 'bookmark') return { bg: 'bg-yellow-500', text: 'text-slate-900', border: 'border-yellow-600', active: 'bg-yellow-600', activeText: 'text-black' };
+
+  return { bg: 'bg-slate-400', text: 'text-white', border: 'border-slate-500', active: 'bg-slate-600', activeText: 'text-white' };
 };
 
 
 const InternalBoard = () => {
-  // ==================================================================================
-  // 1. 상태(State) 선언부
-  // ==================================================================================
-  
+  // ... (상태 변수들은 그대로 유지)
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -162,7 +142,8 @@ const InternalBoard = () => {
 
   const [loginId, setLoginId] = useState('');
   const [loginPw, setLoginPw] = useState('');
-  const apiKey = ""; 
+  
+  // [보안] Google API Key 및 관련 상태 제거됨
 
   const [posts, setPosts] = useState([]);
   const [allBoardPosts, setAllBoardPosts] = useState([]); 
@@ -211,7 +192,8 @@ const InternalBoard = () => {
 
   const [commentInput, setCommentInput] = useState('');
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [isAiLoading, setIsAiLoading] = useState(false);
+  
+  // [보안] AI 로딩 상태 제거됨
 
   const fileInputRef = useRef(null);
   const importFileRef = useRef(null); 
@@ -335,7 +317,7 @@ const InternalBoard = () => {
     if (activeBoardId === 'trash') {
         q = query(postsRef, where("isDeleted", "==", true));
     } else if (activeBoardId === 'bookmark') {
-        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId), where("isDeleted", "==", false));
+        q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId));
     } else {
         q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
     }
@@ -382,7 +364,7 @@ const InternalBoard = () => {
         } else if (activeBoardId === 'bookmark') {
              q = query(postsRef, where("bookmarkedBy", "array-contains", currentUser.userId));
         } else {
-             q = query(postsRef, where("boardId", "==", Number(activeBoardId)), where("isDeleted", "==", false));
+             q = query(postsRef, where("boardId", "==", Number(activeBoardId)));
         }
         
         const documentSnapshots = await getDocs(q);
@@ -392,8 +374,8 @@ const InternalBoard = () => {
             return { ...data, docId: doc.id, isBookmarked };
         });
 
-        if (activeBoardId === 'bookmark') {
-            loadedPosts = loadedPosts.filter(p => !p.isDeleted);
+        if (activeBoardId !== 'trash') {
+             loadedPosts = loadedPosts.filter(p => !p.isDeleted);
         }
         
         loadedPosts.sort((a, b) => b.id - a.id);
@@ -413,11 +395,7 @@ const InternalBoard = () => {
         
     } catch (error) {
         console.error("Error fetching posts:", error);
-        if (error.code === 'failed-precondition') {
-            showAlert("시스템: 인덱스가 생성 중입니다. 잠시 후 다시 시도해주세요.");
-        } else {
-            showAlert("데이터 로딩 실패: " + error.message);
-        }
+        showAlert("데이터 로딩 실패: " + error.message);
     } finally {
         setIsLoadingPosts(false);
     }
@@ -607,18 +585,7 @@ const InternalBoard = () => {
   const handleFileChange = (e) => { if(e.target.files) setWriteForm(p => ({...p, attachments:[...p.attachments, ...Array.from(e.target.files).map(f=>({name:f.name, size:(f.size/1024).toFixed(1)+'KB'}))]})); };
   const removeAttachment = (i) => setWriteForm(p => ({...p, attachments: p.attachments.filter((_, idx) => idx !== i)}));
   
-  const callGeminiAI = async (prompt) => { setIsAiLoading(true); try { const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:prompt}]}]}) }); const d = await r.json(); return d.candidates?.[0]?.content?.parts?.[0]?.text || null; } catch(e){ return null; } finally { setIsAiLoading(false); } };
-  const handleAiRefine = async () => { 
-    const txt = stripHtml(writeForm.content).trim();
-    if(!txt && !writeForm.title) { showAlert("내용 입력 필요"); return; }
-    const prompt = txt ? `다음 내용을 업무용으로 다듬어줘(HTML태그포함): "${txt}"` : `제목 "${writeForm.title}"에 맞는 공지사항 써줘`;
-    const result = await callGeminiAI(prompt);
-    if(result) {
-        const cleaned = result.replace(/```html|```/g, "").trim();
-        setWriteForm(p => ({...p, content: cleaned}));
-        if(contentRef.current) contentRef.current.innerHTML = cleaned;
-    }
-  };
+  // [보안] AI 호출 함수 제거됨
 
   const handleToolbarAction = (act, val, e) => { 
       if (e) e.preventDefault(); 
@@ -663,7 +630,7 @@ const InternalBoard = () => {
     Array.from(contentRef.current.children).forEach(cleanNode);
     
     setWriteForm(prev => ({...prev, content: contentRef.current.innerHTML}));
-    showAlert("모든 서식(제목, 굵게, 색상 등)을 초기화했습니다.");
+    // [수정] 알림창 삭제 요청 반영: showAlert("모든 서식(제목, 굵게, 색상 등)을 초기화했습니다.");
   };
   
   const applyFormatBlock = (tag) => document.execCommand('formatBlock', false, tag);
@@ -1506,7 +1473,25 @@ const InternalBoard = () => {
             </div>
           ))}
         </div>
-        <div className="p-3 border-t border-slate-800"><button onClick={() => { setActiveBoardId('trash'); setViewMode('list'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${activeBoardId === 'trash' ? 'bg-rose-900/50 text-rose-200 border border-rose-800' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}><Trash2 size={18} />휴지통</button></div>
+        
+        {/* [추가] 재고표 사이트 링크 */}
+        <div className="p-3 border-t border-slate-800 space-y-1">
+            <a 
+                href="https://louders-erp.vercel.app/" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-all"
+            >
+                <ExternalLink size={18} /> 재고표 사이트
+            </a>
+            <button 
+                onClick={() => { setActiveBoardId('trash'); setViewMode('list'); }} 
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${activeBoardId === 'trash' ? 'bg-rose-900/50 text-rose-200 border border-rose-800' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+            >
+                <Trash2 size={18} />휴지통
+            </button>
+        </div>
+        
         <div className="p-4 border-t border-slate-800 bg-slate-900/50"><div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-slate-800/50 border border-slate-700/50"><div className="flex items-center gap-3"><div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white"><User size={18} /></div><div className="flex-1 min-w-0"><p className="text-sm font-bold text-white truncate">{currentUser?.name}</p><p className="text-xs text-slate-400 truncate">{currentUser?.dept}</p></div></div><button onClick={handleLogout} className="text-slate-400 hover:text-white"><LogOut size={16} /></button></div></div>
       </aside>
       
@@ -1734,11 +1719,7 @@ const InternalBoard = () => {
                         {writeForm.id ? '게시글 수정' : '새 글 작성'}
                     </h3>
                     <button onClick={handleTempSave} className="ml-auto px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-xs font-bold flex items-center gap-1 transition-colors"><Save size={14}/> 임시저장</button>
-                    <div className="h-6 w-px bg-slate-200 mx-2"></div>
-                    <div className="flex-1 flex items-center bg-indigo-50/50 rounded-full px-3 py-1.5 border border-indigo-100/50">
-                        <Sparkles className="w-4 h-4 text-indigo-600 mr-2" /><span className="text-xs font-bold text-indigo-700 mr-2">AI Assistant</span>
-                        <button onClick={handleAiRefine} disabled={isAiLoading} className="text-xs text-slate-600 hover:text-indigo-700 underline decoration-indigo-200 hover:decoration-indigo-500 transition-all disabled:opacity-50">{isAiLoading ? "작성 중..." : "글 다듬기 / 초안 작성"}</button>
-                    </div>
+                    {/* [보안] AI Assistant 버튼 제거됨 */}
                     <button onClick={handleBackToList} className="text-slate-400 hover:text-slate-700 flex items-center gap-1 text-sm font-medium transition-colors ml-3"><X size={20} /> 취소</button>
                 </div>
               </div>
@@ -1825,11 +1806,12 @@ const InternalBoard = () => {
                       <div className="w-px h-4 bg-slate-300 mx-1"></div>
                       <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-white hover:text-indigo-600 rounded text-slate-600 relative" title="파일 첨부"><Paperclip size={16} /><input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" multiple /></button>
                     </div>
+                    {/* [수정] 본문 기본 폰트 크기 text-sm (14px), 줄간격 leading-loose 추가 */}
                     <div
                       ref={contentRef}
                       contentEditable
                       suppressContentEditableWarning
-                      className="wysiwyg-content w-full flex-1 px-6 py-5 border-none focus:ring-0 text-sm leading-relaxed overflow-y-auto bg-white font-normal text-slate-700 outline-none list-disc list-inside"
+                      className="wysiwyg-content w-full flex-1 px-6 py-5 border-none focus:ring-0 text-sm leading-loose overflow-y-auto bg-white font-normal text-slate-700 outline-none list-disc list-inside"
                       onInput={(e) => setWriteForm({ ...writeForm, content: e.currentTarget.innerHTML })}
                     />
                     <div className="px-4 py-2 border-t border-slate-100 text-xs text-slate-400 bg-slate-50 flex justify-end">글자 수: {stripHtml(writeForm.content).length}자</div>
@@ -1908,8 +1890,8 @@ const InternalBoard = () => {
               </div>
 
               <div className="p-8 md:p-10 bg-white min-h-[500px]">
-                {/* [수정] 상세보기 폰트 크기를 text-sm (14px)로 변경 */}
-                <div className="wysiwyg-content text-slate-800 text-sm px-2" dangerouslySetInnerHTML={{ __html: selectedPost.content || "본문 내용이 없습니다." }} />
+                {/* [수정] 상세보기 폰트 크기를 text-sm (14px)로 변경, 줄간격 leading-loose 추가 */}
+                <div className="wysiwyg-content text-slate-800 text-sm leading-loose px-2" dangerouslySetInnerHTML={{ __html: selectedPost.content || "본문 내용이 없습니다." }} />
                 
                 {selectedPost.attachments && selectedPost.attachments.length > 0 && (
                   <div className="mt-16 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden print-hidden">
