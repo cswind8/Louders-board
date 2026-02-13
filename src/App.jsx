@@ -34,7 +34,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // 캐시 키 상수
-const CACHE_KEY_PREFIX = 'board_cache_v53_'; 
+const CACHE_KEY_PREFIX = 'board_cache_v54_'; // 버전 업
 
 // 기본 카테고리 구조 (초기화용)
 const DEFAULT_CATEGORIES = [
@@ -130,10 +130,6 @@ const getBoardColor = (boardId) => {
 
 
 const InternalBoard = () => {
-  // ==================================================================================
-  // 1. 상태(State) 선언부
-  // ==================================================================================
-  
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -205,9 +201,7 @@ const InternalBoard = () => {
   // 2. Effects & Helpers
   // ==================================================================================
 
-  // [수정] 줌인/줌아웃 허용 메타 태그 설정 (user-scalable=yes)
   useEffect(() => {
-    // Robots meta tag
     let metaRobots = document.querySelector("meta[name='robots']");
     if (!metaRobots) {
       metaRobots = document.createElement('meta');
@@ -216,14 +210,12 @@ const InternalBoard = () => {
     }
     metaRobots.content = "noindex, nofollow";
 
-    // Viewport meta tag (줌 허용)
     let metaViewport = document.querySelector("meta[name='viewport']");
     if (!metaViewport) {
       metaViewport = document.createElement('meta');
       metaViewport.name = "viewport";
       document.head.appendChild(metaViewport);
     }
-    // width=device-width, initial-scale=1.0, user-scalable=yes (최대 5배 확대 가능)
     metaViewport.content = "width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes";
   }, []);
 
@@ -1331,47 +1323,38 @@ const InternalBoard = () => {
               </div>
               
               <div className="overflow-x-auto">
-                <table className="w-full table-fixed">
-                  <colgroup>
-                    <col className="w-8 md:w-10"/>
-                    <col className="w-0 md:w-16"/>
-                    <col />
-                    <col className="w-0 md:w-12"/>
-                    <col className="w-16 md:w-24"/>
-                    <col className="w-20 md:w-32"/>
-                    <col className="w-0 md:w-16"/>
-                  </colgroup>
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
-                      <th className="py-2"><input type="checkbox" onChange={handleSelectAllCheckbox} checked={currentPosts.length > 0 && currentPosts.every(p => selectedIds.includes(p.docId))} /></th>
-                      <th className="hidden md:table-cell">번호</th>
-                      <th className="py-2">제목</th>
-                      <th className="hidden md:table-cell">첨부</th>
-                      <th className="py-2">작성자</th>
-                      <th className="py-2">등록일</th>
-                      <th className="hidden md:table-cell">조회</th>
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
+                    <tr>
+                      <th className="py-3 px-2 w-8 text-center"><input type="checkbox" onChange={handleSelectAllCheckbox} checked={currentPosts.length > 0 && currentPosts.every(p => selectedIds.includes(p.docId))} /></th>
+                      <th className="hidden md:table-cell py-3 px-2 w-16 text-center">번호</th>
+                      <th className="py-3 px-2">제목</th>
+                      <th className="hidden md:table-cell py-3 px-2 w-12 text-center">첨부</th>
+                      <th className="py-3 px-2 w-20 md:w-24 text-center">작성자</th>
+                      <th className="py-3 px-2 w-24 md:w-32 text-center">등록일</th>
+                      <th className="hidden md:table-cell py-3 px-2 w-16 text-center">조회</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
-                            <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            <td className="text-center text-slate-500 hidden md:table-cell">
+                            <td className="py-3 px-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
+                            <td className="py-3 px-2 text-center text-slate-500 hidden md:table-cell">
                                 {(boardTotalCount || posts.length) - (activePage - 1) * postsPerPage - idx}
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-3 px-2">
                                 <div className="flex items-center gap-1.5">
-                                    {post.type === 'notice' && <span className="bg-rose-100 text-rose-600 text-[10px] px-1 rounded font-bold">공지</span>}
-                                    <span className={`font-medium line-clamp-1 ${post.titleColor}`}>{post.title}</span>
-                                    {post.isBookmarked && <Star size={12} className="text-yellow-500 fill-yellow-500" />}
+                                    {post.type === 'notice' && <span className="bg-rose-100 text-rose-600 text-[10px] px-1 rounded font-bold whitespace-nowrap">공지</span>}
+                                    <span className={`font-medium line-clamp-1 break-all ${post.titleColor}`}>{post.title}</span>
+                                    {post.isBookmarked && <Star size={12} className="text-yellow-500 fill-yellow-500 flex-shrink-0" />}
                                 </div>
                             </td>
-                            <td className="text-center hidden md:table-cell">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
-                            <td className="text-center text-slate-600 truncate px-1">{post.author}</td>
-                            <td className="text-center text-slate-500 font-light truncate px-1">{formatDisplayDate(post.date)}</td>
-                            <td className="text-center text-slate-500 font-light hidden md:table-cell">{post.views}</td>
+                            <td className="py-3 px-2 text-center hidden md:table-cell">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
+                            <td className="py-3 px-2 text-center text-slate-600 truncate">{post.author}</td>
+                            <td className="py-3 px-2 text-center text-slate-500 font-light truncate">{formatDisplayDate(post.date)}</td>
+                            <td className="py-3 px-2 text-center text-slate-500 font-light hidden md:table-cell">{post.views}</td>
                         </tr>
-                    )) : <tr><td colSpan="7" className="py-8 text-center text-slate-400">
+                    )) : <tr><td colSpan="7" className="py-12 text-center text-slate-400">
                         {isLoadingPosts ? "데이터 불러오는 중..." : "게시글이 없습니다."}
                     </td></tr>}
                   </tbody>
@@ -1453,25 +1436,16 @@ const InternalBoard = () => {
 
                 <div className="w-full mx-auto bg-white rounded-none md:rounded-xl shadow-none md:shadow-sm border-0 md:border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="overflow-x-auto">
-                        <table className="w-full table-fixed text-sm">
-                            <colgroup>
-                                <col className="w-8 md:w-10"/>
-                                <col className="w-0 md:w-16"/>
-                                <col />
-                                <col className="w-0 md:w-12"/>
-                                <col className="w-16 md:w-24"/>
-                                <col className="w-20 md:w-32"/>
-                                <col className="w-0 md:w-16"/>
-                            </colgroup>
+                        <table className="w-full text-sm text-left border-collapse">
                             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                                 <tr>
-                                    <th className="py-2"></th>
-                                    <th className="hidden md:table-cell">번호</th>
-                                    <th className="py-2">제목</th>
-                                    <th className="hidden md:table-cell">첨부</th>
-                                    <th className="py-2">작성자</th>
-                                    <th className="py-2">등록일</th>
-                                    <th className="hidden md:table-cell">조회</th>
+                                    <th className="py-3 px-2 w-8 text-center"></th>
+                                    <th className="hidden md:table-cell py-3 px-2 w-16 text-center">번호</th>
+                                    <th className="py-3 px-2">제목</th>
+                                    <th className="hidden md:table-cell py-3 px-2 w-12 text-center">첨부</th>
+                                    <th className="py-3 px-2 w-20 md:w-24 text-center">작성자</th>
+                                    <th className="py-3 px-2 w-24 md:w-32 text-center">등록일</th>
+                                    <th className="hidden md:table-cell py-3 px-2 w-16 text-center">조회</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -1482,23 +1456,23 @@ const InternalBoard = () => {
                                     
                                     return (
                                     <tr key={post.docId} onClick={() => handlePostClick(post)} className="border-b hover:bg-slate-50 cursor-pointer text-sm">
-                                        <td className="py-2 text-center" onClick={(e) => {e.stopPropagation();}}></td>
-                                        <td className="text-center py-2 text-slate-500 hidden md:table-cell">
+                                        <td className="py-3 px-2 text-center" onClick={(e) => {e.stopPropagation();}}></td>
+                                        <td className="py-3 px-2 text-center text-slate-500 hidden md:table-cell">
                                             {realNumber}
                                         </td>
-                                        <td className="py-2 px-3">
+                                        <td className="py-3 px-2">
                                             <div className="flex items-center gap-1.5">
                                                 {/* [수정] 배경색은 진하게, 글씨는 흰색으로 통일 */}
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${color.bg} ${color.text} ${color.border}`}>
                                                     {post.category}
                                                 </span>
-                                                <span className={`font-medium line-clamp-1 ${post.titleColor}`}>{post.title}</span>
+                                                <span className={`font-medium line-clamp-1 break-all ${post.titleColor}`}>{post.title}</span>
                                             </div>
                                         </td>
-                                        <td className="text-center hidden md:table-cell">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
-                                        <td className="text-center text-slate-600 truncate px-1">{post.author}</td>
-                                        <td className="text-center text-slate-500 font-light truncate px-1">{formatDisplayDate(post.date)}</td>
-                                        <td className="text-center text-slate-500 font-light hidden md:table-cell">{post.views}</td>
+                                        <td className="py-3 px-2 text-center hidden md:table-cell">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
+                                        <td className="py-3 px-2 text-center text-slate-600 truncate">{post.author}</td>
+                                        <td className="py-3 px-2 text-center text-slate-500 font-light truncate">{formatDisplayDate(post.date)}</td>
+                                        <td className="py-3 px-2 text-center text-slate-500 font-light hidden md:table-cell">{post.views}</td>
                                     </tr>
                                 )}) : (
                                     <tr>
@@ -1514,7 +1488,8 @@ const InternalBoard = () => {
                 </div>
             </div>
           )}
-
+          
+          {/* ... (이하 동일) */}
           {viewMode === 'write' && (
             <div className="w-full mx-auto bg-white rounded-none md:rounded-xl shadow-none md:shadow-sm border-0 md:border border-slate-200 overflow-hidden">
                <style>{`
