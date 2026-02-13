@@ -1512,7 +1512,7 @@ const InternalBoard = () => {
 
         <main className="flex-1 overflow-y-auto p-3 md:p-6" id="main-content">
           {viewMode === 'list' && (
-            <div className={`max-w-7xl mx-auto bg-white rounded-xl shadow-sm border overflow-hidden ${activeBoardId === 'trash' ? 'border-rose-200' : 'border-slate-200'}`}>
+            <div className={`w-full mx-auto bg-white rounded-xl shadow-sm border overflow-hidden ${activeBoardId === 'trash' ? 'border-rose-200' : 'border-slate-200'}`}>
               <div className={`p-3 border-b flex flex-col gap-3 ${activeBoardId === 'trash' ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-100'}`}>
                 <div className="flex flex-col xl:flex-row justify-between items-center gap-3">
                   <div className="flex items-center gap-2 w-full xl:w-auto">
@@ -1702,7 +1702,7 @@ const InternalBoard = () => {
           )}
 
           {viewMode === 'write' && (
-            <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="w-full mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                <style>{`
                 .wysiwyg-content ul { list-style-type: disc; padding-left: 20px; }
                 .wysiwyg-content ol { list-style-type: decimal; padding-left: 20px; }
@@ -1839,7 +1839,7 @@ const InternalBoard = () => {
           )}
 
           {viewMode === 'detail' && selectedPost && (
-            <div className={`max-w-6xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print-content`}>
+            <div className={`w-full mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print-content`}>
                <style>{`
                 .wysiwyg-content ul { list-style-type: disc; padding-left: 20px; }
                 .wysiwyg-content ol { list-style-type: decimal; padding-left: 20px; }
@@ -1947,7 +1947,7 @@ const InternalBoard = () => {
             </div>
           )}
 
-          <div className="max-w-7xl mx-auto mt-6 text-right text-xs text-slate-400 font-medium print-hidden">© 2026 LOUDERS Corp. All rights reserved.</div>
+          <div className="w-full mx-auto mt-6 text-right text-xs text-slate-400 font-medium print-hidden">© 2026 LOUDERS Corp. All rights reserved.</div>
         </main>
       </div>
       
