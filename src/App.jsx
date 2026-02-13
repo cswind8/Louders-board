@@ -1684,7 +1684,7 @@ const InternalBoard = () => {
                     <div className="w-full">
                         <table className="w-full table-fixed text-sm">
                             <colgroup>
-                                <col className="w-10"/>
+                                <col className="hidden md:table-column w-10"/>
                                 <col className="hidden md:table-column w-16"/>
                                 <col/>
                                 <col className="hidden md:table-column w-12"/>
@@ -1694,7 +1694,7 @@ const InternalBoard = () => {
                             </colgroup>
                             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                                 <tr>
-                                    <th className="py-2"></th>
+                                    <th className="py-2 hidden md:table-cell"></th>
                                     <th className="py-2 hidden md:table-cell">번호</th>
                                     <th className="py-2">제목</th>
                                     <th className="py-2 hidden md:table-cell">첨부</th>
@@ -1711,7 +1711,7 @@ const InternalBoard = () => {
                                     
                                     return (
                                     <tr key={post.docId} onClick={() => handlePostClick(post)} className="border-b hover:bg-slate-50 cursor-pointer text-sm">
-                                        <td className="py-2 text-center" onClick={(e) => {e.stopPropagation();}}></td>
+                                        <td className="py-2 text-center hidden md:table-cell" onClick={(e) => {e.stopPropagation();}}></td>
                                         <td className="text-center py-2 text-slate-500 hidden md:table-cell">
                                             {realNumber}
                                         </td>
