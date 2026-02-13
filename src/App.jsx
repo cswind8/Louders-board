@@ -1502,16 +1502,23 @@ const InternalBoard = () => {
         <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-6 shadow-sm z-10 gap-4">
           <div className="flex items-center gap-4"><button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden text-slate-500"><Menu size={20} /></button><h2 className="text-lg font-bold text-slate-800 hidden md:block">{viewMode === 'search' ? '통합 검색' : activeBoard.name}</h2></div>
           
-          {/* [수정] 검색창 옆에 버튼 추가 및 레이아웃 변경 */}
-          <div className="flex-1 max-w-xl mx-auto flex items-center gap-2">
-              <div className="relative flex-1 group">
-                  <input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleGlobalSearch()} placeholder="제목 + 내용 검색 (전체 데이터 검색)" className="w-full pl-10 pr-4 py-2 bg-slate-100 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          {/* [수정] 검색창 내부 버튼 통합 및 파란색 적용 */}
+          <div className="flex-1 max-w-xl mx-auto relative">
+              <div className="relative group">
+                  <input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleGlobalSearch()} placeholder="제목 + 내용 검색 (전체 데이터 검색)" className="w-full pl-10 pr-16 py-2.5 bg-slate-100 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
                   <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  {searchInput && (<button onClick={() => setSearchInput('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={14} /></button>)}
+                  
+                  <div className="absolute right-1.5 top-1.5 bottom-1.5 flex items-center gap-1">
+                      {searchInput && (<button onClick={() => setSearchInput('')} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-colors"><X size={14} /></button>)}
+                      <button 
+                          onClick={handleGlobalSearch} 
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white p-1.5 rounded-full shadow-sm transition-all"
+                          title="검색"
+                      >
+                          <Search size={16} />
+                      </button>
+                  </div>
               </div>
-              <button onClick={handleGlobalSearch} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors whitespace-nowrap">
-                  검색
-              </button>
           </div>
 
           <div className="flex items-center gap-2"><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 rounded-full"><Settings size={18} /></button></div>
@@ -1659,9 +1666,14 @@ const InternalBoard = () => {
                                 <button 
                                     key={boardId}
                                     onClick={() => setSearchFilterBoardId(boardId)}
-                                    className={`px-4 py-2 rounded-full text-sm font-bold transition-all shadow-sm flex items-center gap-2 border ${String(searchFilterBoardId) === String(boardId) ? `${color.active} ${color.activeText} border-transparent` : `${color.bg} ${color.text} ${color.border} hover:opacity-80`}`}
+                                    // [수정] 버튼 스타일을 'badge' 스타일(연한 파스텔톤)로 통일
+                                    className={`px-4 py-2 rounded-full text-xs font-bold transition-all shadow-sm flex items-center gap-2 border ${
+                                        String(searchFilterBoardId) === String(boardId) 
+                                        ? `${color.badge} ring-2 ring-offset-1 ring-indigo-500 opacity-100` 
+                                        : `${color.badge} opacity-60 hover:opacity-100`
+                                    }`}
                                 >
-                                    {boardName} <span className={`text-xs px-1.5 py-0.5 rounded-full ${String(searchFilterBoardId) === String(boardId) ? 'bg-white/20' : 'bg-white/30'}`}>{count}</span>
+                                    {boardName} <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/50">{count}</span>
                                 </button>
                             );
                         })}
