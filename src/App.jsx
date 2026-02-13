@@ -130,7 +130,10 @@ const getBoardColor = (boardId) => {
 
 
 const InternalBoard = () => {
-  // ... (상태 변수들은 그대로 유지)
+  // ==================================================================================
+  // 1. 상태(State) 선언부
+  // ==================================================================================
+  
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -202,7 +205,9 @@ const InternalBoard = () => {
   // 2. Effects & Helpers
   // ==================================================================================
 
+  // [수정] 줌인/줌아웃 허용 메타 태그 설정 (user-scalable=yes)
   useEffect(() => {
+    // Robots meta tag
     let metaRobots = document.querySelector("meta[name='robots']");
     if (!metaRobots) {
       metaRobots = document.createElement('meta');
@@ -210,6 +215,16 @@ const InternalBoard = () => {
       document.head.appendChild(metaRobots);
     }
     metaRobots.content = "noindex, nofollow";
+
+    // Viewport meta tag (줌 허용)
+    let metaViewport = document.querySelector("meta[name='viewport']");
+    if (!metaViewport) {
+      metaViewport = document.createElement('meta');
+      metaViewport.name = "viewport";
+      document.head.appendChild(metaViewport);
+    }
+    // width=device-width, initial-scale=1.0, user-scalable=yes (최대 5배 확대 가능)
+    metaViewport.content = "width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes";
   }, []);
 
   useEffect(() => {
@@ -931,7 +946,7 @@ const InternalBoard = () => {
         
         if (Object.keys(groupedData).length === 0) {
             const ws = XLSX_LIB.utils.json_to_sheet([]);
-            XLSX_LIB.utils.json_to_sheet(wb, ws, "데이터없음");
+            XLSX_LIB.utils.book_append_sheet(wb, ws, "데이터없음");
         } else {
             Object.keys(groupedData).forEach(category => {
                 const postsInCategory = groupedData[category];
@@ -1316,16 +1331,32 @@ const InternalBoard = () => {
               </div>
               
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[800px] table-fixed">
-                  <colgroup><col className="w-10"/><col className="w-16"/><col/><col className="w-12"/><col className="w-24"/><col className="w-32"/><col className="w-16"/></colgroup>
+                <table className="w-full table-fixed">
+                  <colgroup>
+                    <col className="w-8 md:w-10"/>
+                    <col className="w-0 md:w-16"/>
+                    <col />
+                    <col className="w-0 md:w-12"/>
+                    <col className="w-16 md:w-24"/>
+                    <col className="w-20 md:w-32"/>
+                    <col className="w-0 md:w-16"/>
+                  </colgroup>
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase"><th className="py-2"><input type="checkbox" onChange={handleSelectAllCheckbox} checked={currentPosts.length > 0 && currentPosts.every(p => selectedIds.includes(p.docId))} /></th><th>번호</th><th>제목</th><th>첨부</th><th>작성자</th><th>등록일</th><th>조회</th></tr>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
+                      <th className="py-2"><input type="checkbox" onChange={handleSelectAllCheckbox} checked={currentPosts.length > 0 && currentPosts.every(p => selectedIds.includes(p.docId))} /></th>
+                      <th className="hidden md:table-cell">번호</th>
+                      <th className="py-2">제목</th>
+                      <th className="hidden md:table-cell">첨부</th>
+                      <th className="py-2">작성자</th>
+                      <th className="py-2">등록일</th>
+                      <th className="hidden md:table-cell">조회</th>
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            <td className="text-center text-slate-500">
+                            <td className="text-center text-slate-500 hidden md:table-cell">
                                 {(boardTotalCount || posts.length) - (activePage - 1) * postsPerPage - idx}
                             </td>
                             <td className="py-2 px-3">
@@ -1335,10 +1366,10 @@ const InternalBoard = () => {
                                     {post.isBookmarked && <Star size={12} className="text-yellow-500 fill-yellow-500" />}
                                 </div>
                             </td>
-                            <td className="text-center">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
-                            <td className="text-center text-slate-600">{post.author}</td>
-                            <td className="text-center text-slate-500 font-light">{formatDisplayDate(post.date)}</td>
-                            <td className="text-center text-slate-500 font-light">{post.views}</td>
+                            <td className="text-center hidden md:table-cell">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
+                            <td className="text-center text-slate-600 truncate px-1">{post.author}</td>
+                            <td className="text-center text-slate-500 font-light truncate px-1">{formatDisplayDate(post.date)}</td>
+                            <td className="text-center text-slate-500 font-light hidden md:table-cell">{post.views}</td>
                         </tr>
                     )) : <tr><td colSpan="7" className="py-8 text-center text-slate-400">
                         {isLoadingPosts ? "데이터 불러오는 중..." : "게시글이 없습니다."}
@@ -1422,17 +1453,25 @@ const InternalBoard = () => {
 
                 <div className="w-full mx-auto bg-white rounded-none md:rounded-xl shadow-none md:shadow-sm border-0 md:border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[800px] table-fixed text-sm">
-                            <colgroup><col className="w-10"/><col className="w-16"/><col/><col className="w-12"/><col className="w-24"/><col className="w-32"/><col className="w-16"/></colgroup>
+                        <table className="w-full table-fixed text-sm">
+                            <colgroup>
+                                <col className="w-8 md:w-10"/>
+                                <col className="w-0 md:w-16"/>
+                                <col />
+                                <col className="w-0 md:w-12"/>
+                                <col className="w-16 md:w-24"/>
+                                <col className="w-20 md:w-32"/>
+                                <col className="w-0 md:w-16"/>
+                            </colgroup>
                             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                                 <tr>
                                     <th className="py-2"></th>
-                                    <th className="py-2">번호</th>
+                                    <th className="hidden md:table-cell">번호</th>
                                     <th className="py-2">제목</th>
-                                    <th className="py-2">첨부</th>
+                                    <th className="hidden md:table-cell">첨부</th>
                                     <th className="py-2">작성자</th>
                                     <th className="py-2">등록일</th>
-                                    <th className="py-2">조회</th>
+                                    <th className="hidden md:table-cell">조회</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -1444,7 +1483,7 @@ const InternalBoard = () => {
                                     return (
                                     <tr key={post.docId} onClick={() => handlePostClick(post)} className="border-b hover:bg-slate-50 cursor-pointer text-sm">
                                         <td className="py-2 text-center" onClick={(e) => {e.stopPropagation();}}></td>
-                                        <td className="text-center py-2 text-slate-500">
+                                        <td className="text-center py-2 text-slate-500 hidden md:table-cell">
                                             {realNumber}
                                         </td>
                                         <td className="py-2 px-3">
@@ -1456,10 +1495,10 @@ const InternalBoard = () => {
                                                 <span className={`font-medium line-clamp-1 ${post.titleColor}`}>{post.title}</span>
                                             </div>
                                         </td>
-                                        <td className="text-center">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
-                                        <td className="text-center text-slate-600">{post.author}</td>
-                                        <td className="text-center text-slate-500 font-light">{formatDisplayDate(post.date)}</td>
-                                        <td className="text-center text-slate-500 font-light">{post.views}</td>
+                                        <td className="text-center hidden md:table-cell">{(post.attachments?.length > 0 || post.file) && <Paperclip size={14} className="text-slate-400 inline" />}</td>
+                                        <td className="text-center text-slate-600 truncate px-1">{post.author}</td>
+                                        <td className="text-center text-slate-500 font-light truncate px-1">{formatDisplayDate(post.date)}</td>
+                                        <td className="text-center text-slate-500 font-light hidden md:table-cell">{post.views}</td>
                                     </tr>
                                 )}) : (
                                     <tr>
@@ -1722,7 +1761,7 @@ const InternalBoard = () => {
             </div>
           )}
 
-          <div className="w-full mx-auto mt-6 text-right text-xs text-slate-400 font-medium print-hidden">© 2026 LOUDERS Corp. All rights reserved.</div>
+          <div className="max-w-7xl mx-auto mt-6 text-right text-xs text-slate-400 font-medium print-hidden">© 2026 LOUDERS Corp. All rights reserved.</div>
         </main>
       </div>
       
