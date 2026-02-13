@@ -115,17 +115,18 @@ const htmlToTextWithLineBreaks = (html) => { if (!html) return ""; let t = html.
 const getBoardColor = (boardId) => {
   const bid = Number(boardId);
   
-  if (bid === 11) return { bg: 'bg-orange-600', text: 'text-white', border: 'border-orange-700', active: 'bg-orange-800', activeText: 'text-white' };
-  if (bid === 12) return { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700', active: 'bg-blue-800', activeText: 'text-white' };
-  if (bid === 13) return { bg: 'bg-green-600', text: 'text-white', border: 'border-green-700', active: 'bg-green-800', activeText: 'text-white' };
-  if (bid === 14) return { bg: 'bg-slate-500', text: 'text-white', border: 'border-slate-600', active: 'bg-slate-700', activeText: 'text-white' };
-  if (bid === 15) return { bg: 'bg-red-600', text: 'text-white', border: 'border-red-700', active: 'bg-red-800', activeText: 'text-white' };
-  if (bid === 16) return { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-700', active: 'bg-purple-800', activeText: 'text-white' };
-  if (bid >= 20) return { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-700', active: 'bg-indigo-800', activeText: 'text-white' };
-  if (boardId === 'all') return { bg: 'bg-slate-800', text: 'text-white', border: 'border-slate-900', active: 'bg-black', activeText: 'text-white' };
-  if (boardId === 'bookmark') return { bg: 'bg-yellow-500', text: 'text-slate-900', border: 'border-yellow-600', active: 'bg-yellow-600', activeText: 'text-black' };
+  // [수정] badge 속성 추가: 연한 배경색 + 진한 텍스트 + 연한 테두리
+  if (bid === 11) return { bg: 'bg-orange-600', text: 'text-white', border: 'border-orange-700', active: 'bg-orange-800', activeText: 'text-white', badge: 'bg-orange-50 text-orange-700 border-orange-200' };
+  if (bid === 12) return { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700', active: 'bg-blue-800', activeText: 'text-white', badge: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (bid === 13) return { bg: 'bg-green-600', text: 'text-white', border: 'border-green-700', active: 'bg-green-800', activeText: 'text-white', badge: 'bg-green-50 text-green-700 border-green-200' };
+  if (bid === 14) return { bg: 'bg-slate-500', text: 'text-white', border: 'border-slate-600', active: 'bg-slate-700', activeText: 'text-white', badge: 'bg-slate-100 text-slate-700 border-slate-200' };
+  if (bid === 15) return { bg: 'bg-red-600', text: 'text-white', border: 'border-red-700', active: 'bg-red-800', activeText: 'text-white', badge: 'bg-red-50 text-red-700 border-red-200' };
+  if (bid === 16) return { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-700', active: 'bg-purple-800', activeText: 'text-white', badge: 'bg-purple-50 text-purple-700 border-purple-200' };
+  if (bid >= 20) return { bg: 'bg-indigo-600', text: 'text-white', border: 'border-indigo-700', active: 'bg-indigo-800', activeText: 'text-white', badge: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+  if (boardId === 'all') return { bg: 'bg-slate-800', text: 'text-white', border: 'border-slate-900', active: 'bg-black', activeText: 'text-white', badge: 'bg-slate-100 text-slate-700 border-slate-200' };
+  if (boardId === 'bookmark') return { bg: 'bg-yellow-500', text: 'text-slate-900', border: 'border-yellow-600', active: 'bg-yellow-600', activeText: 'text-black', badge: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
 
-  return { bg: 'bg-slate-400', text: 'text-white', border: 'border-slate-500', active: 'bg-slate-600', activeText: 'text-white' };
+  return { bg: 'bg-slate-400', text: 'text-white', border: 'border-slate-500', active: 'bg-slate-600', activeText: 'text-white', badge: 'bg-slate-100 text-slate-600 border-slate-200' };
 };
 
 
@@ -1501,10 +1502,16 @@ const InternalBoard = () => {
         <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-6 shadow-sm z-10 gap-4">
           <div className="flex items-center gap-4"><button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden text-slate-500"><Menu size={20} /></button><h2 className="text-lg font-bold text-slate-800 hidden md:block">{viewMode === 'search' ? '통합 검색' : activeBoard.name}</h2></div>
           
-          <div className="flex-1 max-w-xl mx-auto relative group">
-              <input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleGlobalSearch()} placeholder="제목 + 내용 검색 (전체 데이터 검색)" className="w-full pl-10 pr-4 py-2 bg-slate-100 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              {searchInput && (<button onClick={() => setSearchInput('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={14} /></button>)}
+          {/* [수정] 검색창 옆에 버튼 추가 및 레이아웃 변경 */}
+          <div className="flex-1 max-w-xl mx-auto flex items-center gap-2">
+              <div className="relative flex-1 group">
+                  <input type="text" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleGlobalSearch()} placeholder="제목 + 내용 검색 (전체 데이터 검색)" className="w-full pl-10 pr-4 py-2 bg-slate-100 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  {searchInput && (<button onClick={() => setSearchInput('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={14} /></button>)}
+              </div>
+              <button onClick={handleGlobalSearch} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors whitespace-nowrap">
+                  검색
+              </button>
           </div>
 
           <div className="flex items-center gap-2"><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 rounded-full"><Settings size={18} /></button></div>
@@ -1698,8 +1705,8 @@ const InternalBoard = () => {
                                         </td>
                                         <td className="py-2 px-3">
                                             <div className="flex items-center gap-1.5">
-                                                {/* [수정] 배경색은 진하게, 글씨는 흰색으로 통일 */}
-                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${color.bg} ${color.text} ${color.border}`}>
+                                                {/* [수정] 검색 목록에서는 연한 파스텔톤 뱃지(badge) 스타일 적용 */}
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${color.badge}`}>
                                                     {post.category}
                                                 </span>
                                                 <span className={`font-medium line-clamp-1 ${post.titleColor}`}>{post.title}</span>
