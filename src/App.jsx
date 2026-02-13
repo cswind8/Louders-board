@@ -1510,7 +1510,7 @@ const InternalBoard = () => {
           <div className="flex items-center gap-2"><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 rounded-full"><Settings size={18} /></button></div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-3 md:p-6" id="main-content">
+        <main className="flex-1 overflow-y-auto p-0 md:p-6" id="main-content">
           {viewMode === 'list' && (
             <div className={`w-full mx-auto bg-white rounded-xl shadow-sm border overflow-hidden ${activeBoardId === 'trash' ? 'border-rose-200' : 'border-slate-200'}`}>
               <div className={`p-3 border-b flex flex-col gap-3 ${activeBoardId === 'trash' ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-100'}`}>
