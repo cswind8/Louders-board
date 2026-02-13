@@ -1558,7 +1558,7 @@ const InternalBoard = () => {
                 <table className="w-full table-fixed">
                   <colgroup>
                     <col className="w-10"/>
-                    <col className="w-12 md:w-16"/>
+                    <col className="hidden md:table-column w-16"/>
                     <col/>
                     <col className="hidden md:table-column w-12"/>
                     <col className="hidden md:table-column w-24"/>
@@ -1568,7 +1568,7 @@ const InternalBoard = () => {
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                         <th className="py-2"><input type="checkbox" onChange={handleSelectAllCheckbox} checked={currentPosts.length > 0 && currentPosts.every(p => selectedIds.includes(p.docId))} /></th>
-                        <th>번호</th>
+                        <th className="hidden md:table-cell">번호</th>
                         <th>제목</th>
                         <th className="hidden md:table-cell">첨부</th>
                         <th className="hidden md:table-cell">작성자</th>
@@ -1580,7 +1580,7 @@ const InternalBoard = () => {
                     {currentPosts.length > 0 ? currentPosts.map((post, idx) => (
                         <tr key={post.docId} onClick={() => handlePostClick(post)} className={`hover:bg-indigo-50/60 cursor-pointer text-sm ${selectedIds.includes(post.docId) ? 'bg-indigo-50' : ''}`}>
                             <td className="py-2 text-center" onClick={(e) => {e.stopPropagation(); toggleSelection(post.docId);}}><input type="checkbox" checked={selectedIds.includes(post.docId)} onChange={() => {}} className="cursor-pointer" /></td>
-                            <td className="text-center text-slate-500">
+                            <td className="text-center text-slate-500 hidden md:table-cell">
                                 {(boardTotalCount || posts.length) - (activePage - 1) * postsPerPage - idx}
                             </td>
                             <td className="py-2 px-3">
@@ -1685,7 +1685,7 @@ const InternalBoard = () => {
                         <table className="w-full table-fixed text-sm">
                             <colgroup>
                                 <col className="w-10"/>
-                                <col className="w-12 md:w-16"/>
+                                <col className="hidden md:table-column w-16"/>
                                 <col/>
                                 <col className="hidden md:table-column w-12"/>
                                 <col className="hidden md:table-column w-24"/>
@@ -1695,7 +1695,7 @@ const InternalBoard = () => {
                             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
                                 <tr>
                                     <th className="py-2"></th>
-                                    <th className="py-2">번호</th>
+                                    <th className="py-2 hidden md:table-cell">번호</th>
                                     <th className="py-2">제목</th>
                                     <th className="py-2 hidden md:table-cell">첨부</th>
                                     <th className="py-2 hidden md:table-cell">작성자</th>
@@ -1712,7 +1712,7 @@ const InternalBoard = () => {
                                     return (
                                     <tr key={post.docId} onClick={() => handlePostClick(post)} className="border-b hover:bg-slate-50 cursor-pointer text-sm">
                                         <td className="py-2 text-center" onClick={(e) => {e.stopPropagation();}}></td>
-                                        <td className="text-center py-2 text-slate-500">
+                                        <td className="text-center py-2 text-slate-500 hidden md:table-cell">
                                             {realNumber}
                                         </td>
                                         <td className="py-2 px-3">
