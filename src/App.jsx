@@ -276,13 +276,18 @@ const InternalBoard = () => {
     }
     const handlePopState = (event) => {
       if (viewMode !== 'list' && viewMode !== 'login') {
-        setViewMode('list');
+        // 상세 화면에서 뒤로 갈 때 검색어가 있으면 검색 결과 화면 유지
+        if (viewMode === 'detail' && searchQuery) {
+          setViewMode('search');
+        } else {
+          setViewMode('list');
+        }
         setSelectedPost(null);
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [viewMode]);
+  }, [viewMode, searchQuery]); // 맨 끝에 searchQuery 추가 (중요)
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.XLSX) {
