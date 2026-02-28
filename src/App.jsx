@@ -270,24 +270,32 @@ const InternalBoard = () => {
     }
   }, [viewMode]); 
 
-  useEffect(() => {
-    if (viewMode === 'detail' || viewMode === 'write' || viewMode === 'search') {
+ useEffect(() => {
+    // 1. 뒤로 가기를 누른 게 아닐 때만 방문 기록 추가 (이중 기록으로 인한 튕김 방지)
+    if (!window.isBackAction && (viewMode === 'detail' || viewMode === 'write' || viewMode === 'search')) {
       window.history.pushState({ page: viewMode }, "", "");
     }
+    window.isBackAction = false; // 플래그 초기화
+
     const handlePopState = (event) => {
+      window.isBackAction = true; // 뒤로 가기가 실행되었음을 표시
+
       if (viewMode !== 'list' && viewMode !== 'login') {
-        // 상세 화면에서 뒤로 갈 때 검색어가 있으면 검색 결과 화면 유지
+        // 상세 화면에서 뒤로 갈 때는 검색 리스트 유지
         if (viewMode === 'detail' && searchQuery) {
           setViewMode('search');
         } else {
+          // 검색 리스트에서 뒤로 갈 때는 검색 상태를 완전히 초기화하고 일반 목록으로 복귀
           setViewMode('list');
+          setSearchQuery(''); // ◀ 이 부분이 추가됨 (검색어 비우기)
+          setSearchInput(''); // ◀ 이 부분이 추가됨 (검색창 비우기)
         }
         setSelectedPost(null);
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [viewMode, searchQuery]); // 맨 끝에 searchQuery 추가 (중요)
+  }, [viewMode, searchQuery]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.XLSX) {
