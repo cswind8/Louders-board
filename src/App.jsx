@@ -212,16 +212,26 @@ const InternalBoard = () => {
         const data = docSnapshot.data();
         if (data.categories) {
           setCategories(data.categories);
+          // 💡 변경점 1: 서버의 최신 데이터를 가져왔을 때만 로컬(내 컴퓨터) 캐시를 최신화하여 백업함
+          localStorage.setItem('board_categories', JSON.stringify(data.categories));
         }
       } else {
+        // 서버에 아예 데이터가 없는 최초 세팅 시에만 작동
         let initialCategories = DEFAULT_CATEGORIES;
         const localData = localStorage.getItem('board_categories');
+        
+        // 💡 변경점 2: 로컬 데이터가 있더라도 형식이 깨졌거나 비어있으면 무시하고 기본값(DEFAULT) 사용
         if (localData) {
           try {
-            initialCategories = JSON.parse(localData);
+            const parsed = JSON.parse(localData);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+               initialCategories = parsed;
+            }
           } catch(e) { console.error(e); }
         }
-        await setDoc(settingsDocRef, { categories: initialCategories });
+        
+        // 💡 변경점 3: merge 옵션을 추가하여 다른 설정이 날아가지 않게 안전하게 병합 저장
+        await setDoc(settingsDocRef, { categories: initialCategories }, { merge: true });
         setCategories(initialCategories);
       }
     });
