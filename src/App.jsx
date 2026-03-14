@@ -162,8 +162,9 @@ const InternalBoard = () => {
   const [isXlsxLoaded, setIsXlsxLoaded] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [users, setUsers] = useState([]);
+  const [boardTemplates, setBoardTemplates] = useState({}); // ◀ 추가: 양식만 따로 관리하는 저장소
 
   const [activeBoardId, setActiveBoardId] = useState(11);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -249,6 +250,19 @@ const InternalBoard = () => {
       } else {
         await setDoc(usersDocRef, { list: DEFAULT_USERS });
         setUsers(DEFAULT_USERS);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // ◀ 추가: 양식 데이터만 따로 구독(Listen)하는 로직
+  useEffect(() => {
+    const templatesRef = doc(db, 'settings', 'board_templates');
+    const unsubscribe = onSnapshot(templatesRef, (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        setBoardTemplates(docSnapshot.data());
+      } else {
+        setDoc(templatesRef, {}, { merge: true }); // 없으면 빈 문서 생성
       }
     });
     return () => unsubscribe();
@@ -536,8 +550,10 @@ const InternalBoard = () => {
 
   const handleGoToWrite = () => { 
     let content = ''; 
-    const ab = categories.flatMap(c => c.boards).find(b => b.id === activeBoardId);
-    if(ab && ab.defaultContent) content = textToHtmlWithLineBreaks(ab.defaultContent); 
+    // 변경됨: categories를 탐색하지 않고, 독립된 boardTemplates에서 양식을 바로 꺼내옴
+    if (boardTemplates[activeBoardId]) {
+        content = textToHtmlWithLineBreaks(boardTemplates[activeBoardId]); 
+    }
     setWriteForm({ id: null, docId: null, title: '', content, titleColor: 'text-rose-600', titleSize: 'text-[12pt]', attachments: [] }); 
     setViewMode('write'); 
   };
@@ -954,11 +970,13 @@ const InternalBoard = () => {
     }
   };
 
-  const startEditing = (type, id, currentName, currentDefaultContent = '') => {
+  const startEditing = (type, id, currentName) => {
+    // 변경됨: 연필 누를 때 분리된 boardTemplates에서 기존 양식을 찾아옴
+    const currentDefaultContent = type === 'board' ? (boardTemplates[id] || '') : '';
     setEditingItem({ type, id, name: currentName, defaultContent: currentDefaultContent });
   };
 
-  const saveEditing = () => {
+  const saveEditing = async () => {
     if (!editingItem || !editingItem.name.trim()) return;
     let newCategories;
     
@@ -967,12 +985,23 @@ const InternalBoard = () => {
         cat.id === editingItem.id ? { ...cat, name: editingItem.name } : cat
       );
     } else if (editingItem.type === 'board') {
+      // 1. 카테고리에는 게시판 이름만 업데이트 (defaultContent 삭제)
       newCategories = categories.map(cat => ({
         ...cat,
         boards: cat.boards.map(b => 
-          b.id === editingItem.id ? { ...b, name: editingItem.name, defaultContent: editingItem.defaultContent } : b
+          b.id === editingItem.id ? { ...b, name: editingItem.name } : b
         )
       }));
+
+      // 2. 양식은 완전히 독립된 DB(board_templates)에 저장
+      try {
+        const templatesRef = doc(db, 'settings', 'board_templates');
+        await setDoc(templatesRef, { [String(editingItem.id)]: editingItem.defaultContent }, { merge: true });
+        // 로컬 상태도 즉시 업데이트
+        setBoardTemplates(prev => ({ ...prev, [editingItem.id]: editingItem.defaultContent }));
+      } catch (e) {
+        console.error("양식 저장 실패:", e);
+      }
     }
     
     if (newCategories) updateCategories(newCategories);
