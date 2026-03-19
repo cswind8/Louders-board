@@ -466,14 +466,32 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   };
   const searchResults = getSearchResults();
   
-  const searchBoardStats = searchResults.reduce((acc, post) => {
-    acc[post.boardId] = (acc[post.boardId] || 0) + 1;
-    return acc;
-  }, {});
+  // [수정 1] 게시판 ID 대신 '게시판 이름'을 기준으로 탭 데이터 생성
+  const searchTabsData = (() => {
+      const counts = {};
+      searchResults.forEach(post => {
+          let tabName = '기타';
+          const foundBoard = categories.flatMap(c => c.boards).find(b => String(b.id) === String(post.boardId));
+          if (foundBoard) {
+              tabName = foundBoard.name;
+          }
+          counts[tabName] = (counts[tabName] || 0) + 1;
+      });
+      return counts;
+  })();
 
+  // [수정 2] 선택한 탭 이름과 정확히 일치하는 글만 필터링하도록 변경 (NaN 오류 해결)
   const getFilteredSearchResults = () => {
       if (searchFilterBoardId === 'all') return searchResults;
-      return searchResults.filter(p => p.boardId === parseInt(searchFilterBoardId));
+
+      return searchResults.filter(post => {
+          let tabName = '기타';
+          const foundBoard = categories.flatMap(c => c.boards).find(b => String(b.id) === String(post.boardId));
+          if (foundBoard) {
+              tabName = foundBoard.name;
+          }
+          return tabName === searchFilterBoardId;
+      });
   };
   const currentSearchResults = getFilteredSearchResults();
 
@@ -1705,27 +1723,21 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
                             전체보기 <span className={`text-xs px-1.5 py-0.5 rounded-full ${searchFilterBoardId === 'all' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>{searchResults.length}</span>
                         </button>
                         
-                        {Object.entries(searchBoardStats).map(([boardId, count]) => {
-                            let boardName = '기타';
-                            const foundBoard = categories.flatMap(c => c.boards).find(b => b.id == boardId);
-                            if (foundBoard) boardName = foundBoard.name;
-                            if (boardId === 'bookmark') boardName = '북마크';
-                            
-                            // [수정] 게시판별 직관적인(진한) 색상 적용
-                            const color = getBoardColor(boardId);
+                        {Object.entries(searchTabsData).map(([tabName, count]) => {
+                            const matchedBoard = categories.flatMap(c => c.boards).find(b => b.name === tabName);
+                            const color = matchedBoard ? getBoardColor(matchedBoard.id) : getBoardColor('all');
                             
                             return (
                                 <button 
-                                    key={boardId}
-                                    onClick={() => setSearchFilterBoardId(boardId)}
-                                    // [수정] 버튼 스타일을 'badge' 스타일(연한 파스텔톤)로 통일
+                                    key={tabName}
+                                    onClick={() => setSearchFilterBoardId(tabName)}
                                     className={`px-4 py-2 rounded-full text-xs font-bold transition-all shadow-sm flex items-center gap-2 border ${
-                                        String(searchFilterBoardId) === String(boardId) 
+                                        searchFilterBoardId === tabName 
                                         ? `${color.badge} ring-2 ring-offset-1 ring-indigo-500 opacity-100` 
                                         : `${color.badge} opacity-60 hover:opacity-100`
                                     }`}
                                 >
-                                    {boardName} <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/50">{count}</span>
+                                    {tabName} <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/50">{count}</span>
                                 </button>
                             );
                         })}
