@@ -130,7 +130,7 @@ const getBoardColor = (boardId) => {
 };
 
 
-const InternalBoard = () => {
+const App = () => {
   // ... (상태 변수들은 그대로 유지)
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('board_user');
@@ -466,30 +466,48 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   };
   const searchResults = getSearchResults();
   
-  // [수정 1] 게시판 ID 대신 '게시판 이름'을 기준으로 탭 데이터 생성
+  // [수정] 오류성 데이터(NaN, bookmark 등)를 '분류오류(삭제요망)'으로 명확하게 묶어서 보여줌
   const searchTabsData = (() => {
       const counts = {};
       searchResults.forEach(post => {
-          let tabName = '기타';
-          const foundBoard = categories.flatMap(c => c.boards).find(b => String(b.id) === String(post.boardId));
-          if (foundBoard) {
-              tabName = foundBoard.name;
+          let tabName;
+          
+          // 소속 게시판 번호가 꼬인 유령 데이터 처리
+          if (String(post.boardId) === 'bookmark' || isNaN(Number(post.boardId))) {
+               tabName = '분류오류(삭제요망)';
+          } else {
+              const foundBoard = categories.flatMap(c => c.boards).find(b => String(b.id) === String(post.boardId));
+              // 정상 카테고리를 찾았지만 가상 게시판(bookmark)이 아닌 경우
+              if (foundBoard && foundBoard.id !== 'bookmark') {
+                  tabName = foundBoard.name;
+              } else {
+                  tabName = '분류오류(삭제요망)';
+              }
           }
+          
           counts[tabName] = (counts[tabName] || 0) + 1;
       });
       return counts;
   })();
 
-  // [수정] 남아있던 이전 버전의 검색 필터링 로직을 완벽하게 새 버전으로 교체
+  // [수정] 필터링 로직도 동일한 규칙 적용
   const getFilteredSearchResults = () => {
       if (searchFilterBoardId === 'all') return searchResults;
 
       return searchResults.filter(post => {
-          let tabName = '기타';
-          const foundBoard = categories.flatMap(c => c.boards).find(b => String(b.id) === String(post.boardId));
-          if (foundBoard) {
-              tabName = foundBoard.name;
+          let tabName;
+          
+          if (String(post.boardId) === 'bookmark' || isNaN(Number(post.boardId))) {
+               tabName = '분류오류(삭제요망)';
+          } else {
+              const foundBoard = categories.flatMap(c => c.boards).find(b => String(b.id) === String(post.boardId));
+              if (foundBoard && foundBoard.id !== 'bookmark') {
+                  tabName = foundBoard.name;
+              } else {
+                  tabName = '분류오류(삭제요망)';
+              }
           }
+          
           return tabName === searchFilterBoardId;
       });
   };
@@ -1729,7 +1747,14 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
                             전체보기 <span className={`text-xs px-1.5 py-0.5 rounded-full ${searchFilterBoardId === 'all' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>{searchResults.length}</span>
                         </button>
                         
-                        {Object.entries(searchTabsData).map(([tabName, count]) => {
+                        {Object.entries(searchTabsData)
+                            .sort(([nameA], [nameB]) => {
+                                // '분류오류(삭제요망)' 탭을 항상 배열의 맨 끝으로 보냄
+                                if (nameA === '분류오류(삭제요망)') return 1;
+                                if (nameB === '분류오류(삭제요망)') return -1;
+                                return 0;
+                            })
+                            .map(([tabName, count]) => {
                             const matchedBoard = categories.flatMap(c => c.boards).find(b => b.name === tabName);
                             const color = matchedBoard ? getBoardColor(matchedBoard.id) : getBoardColor('all');
                             
@@ -2333,4 +2358,4 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   );
 };
 
-export default InternalBoard;
+export default App;
