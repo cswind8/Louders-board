@@ -480,7 +480,7 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
       return counts;
   })();
 
-  // [수정 2] 선택한 탭 이름과 정확히 일치하는 글만 필터링하도록 변경 (NaN 오류 해결)
+  // [수정] 남아있던 이전 버전의 검색 필터링 로직을 완벽하게 새 버전으로 교체
   const getFilteredSearchResults = () => {
       if (searchFilterBoardId === 'all') return searchResults;
 
@@ -1608,18 +1608,24 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
                   </div>
 
                   <div className="flex items-center gap-2">
-                     {activeBoardId === 'trash' ? 
-                     <>
-                        <button onClick={handleRestoreSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><RefreshCcw className="w-3.5 h-3.5" /> 복구</button>
-                        <button onClick={handleDeleteSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><Trash2 className="w-3.5 h-3.5" /> 영구삭제</button>
-                     </> 
-                     : (
-                     <>
-                        <button onClick={() => handleMoveContent('up')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md" title="위로"><ArrowUp size={16} /></button>
-                        <button onClick={() => handleMoveContent('down')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md" title="아래로"><ArrowDown size={16} /></button>
-                        <button onClick={handleDeleteSelected} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md" title="삭제"><Trash2 size={16} /></button>
-                        <button onClick={handleGoToWrite} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md text-xs font-bold shadow-sm"><PenSquare size={14} /> 글쓰기</button>
-                     </>)}
+                     {activeBoardId === 'trash' ? (
+                         <>
+                            <button onClick={handleRestoreSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><RefreshCcw className="w-3.5 h-3.5" /> 복구</button>
+                            <button onClick={handleDeleteSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><Trash2 className="w-3.5 h-3.5" /> 영구삭제</button>
+                         </> 
+                     ) : activeBoardId === 'bookmark' ? (
+                         <>
+                            {/* [수정] 북마크 탭에서는 글쓰기 버튼을 숨겨서 오류성 글 생성을 원천 차단 */}
+                            <button onClick={handleDeleteSelected} className="flex items-center gap-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-md text-xs font-bold shadow-sm whitespace-nowrap"><Trash2 className="w-3.5 h-3.5" /> 선택삭제</button>
+                         </>
+                     ) : (
+                         <>
+                            <button onClick={() => handleMoveContent('up')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md" title="위로"><ArrowUp size={16} /></button>
+                            <button onClick={() => handleMoveContent('down')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-md" title="아래로"><ArrowDown size={16} /></button>
+                            <button onClick={handleDeleteSelected} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md" title="삭제"><Trash2 size={16} /></button>
+                            <button onClick={handleGoToWrite} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md text-xs font-bold shadow-sm"><PenSquare size={14} /> 글쓰기</button>
+                         </>
+                     )}
                   </div>
                 </div>
               </div>
