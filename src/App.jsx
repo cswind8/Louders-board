@@ -268,6 +268,27 @@ const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
     return () => unsubscribe();
   }, []);
 
+  // [추가] 비밀번호 변경 또는 계정 삭제 시 자동 로그아웃 처리
+  useEffect(() => {
+    // 로그인이 되어 있고, 서버에서 불러온 사용자 목록이 있을 때만 검사
+    if (currentUser && users.length > 0) {
+      // 현재 로그인된 아이디와 일치하는 최신 사용자 정보를 찾음
+      const matchedUser = users.find(u => u.userId === currentUser.userId);
+      
+      // 계정이 삭제되었거나, 비밀번호가 예전 비밀번호와 다르면 강제 로그아웃
+      if (!matchedUser || matchedUser.password !== currentUser.password) {
+        alert("계정 정보(비밀번호 등)가 변경되어 안전을 위해 로그아웃 됩니다.");
+        setCurrentUser(null);
+        localStorage.removeItem('board_user');
+        setViewMode('login');
+        
+        // (선택사항) 초기화 필요 시 주석 해제
+        // setPosts([]);
+        // clearCache();
+      }
+    }
+  }, [users, currentUser]);
+
   const updateCategories = async (newCategories) => {
     setCategories(newCategories);
     try {
